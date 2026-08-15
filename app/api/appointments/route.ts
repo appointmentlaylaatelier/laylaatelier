@@ -7,7 +7,7 @@ import { DEFAULT_CLIENT_MESSAGE01, DEFAULT_EMAIL_SUBJECT01, sendClientMessage } 
 import {
   BUSINESS_WHATSAPP_NUMBER,
   DEFAULT_WHATSAPP_INQUIRY_MESSAGE,
-  buildWhatsAppInquiryUrl,
+  buildWhatsAppClientUrl,
   renderWhatsAppInquiry,
 } from "@/lib/whatsapp";
 
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
     };
 
     const whatsappMessage = renderWhatsAppInquiry(whatsappMessageTemplate, context);
-    const whatsappUrl = buildWhatsAppInquiryUrl(whatsappMessage);
+    const whatsappUrl = buildWhatsAppClientUrl(appointment.phone, whatsappMessage);
     const delivery = await sendClientMessage(context, {
       channel: "email",
       emailMessageTemplate,
@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
             whatsapp: {
               mode: "click_to_chat",
               businessNumber: BUSINESS_WHATSAPP_NUMBER,
+              clientNumber: appointment.phone,
               url: whatsappUrl,
             },
             email: delivery.email,

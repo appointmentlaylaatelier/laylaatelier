@@ -30,9 +30,21 @@ export function buildWhatsAppInquiryUrl(message: string) {
 }
 
 export function buildWhatsAppClientUrl(phone: string, message: string) {
-  let digits = phone.trim().replace(/^00/, "").replace(/\D/g, "");
-  const defaultCountryCode = (process.env.NEXT_PUBLIC_WHATSAPP_DEFAULT_COUNTRY_CODE || "974").replace(/\D/g, "");
-  if (digits && digits.length <= 8) digits = `${defaultCountryCode}${digits}`;
+  let digits = phone
+    .trim()
+    .replace(/^00/, "")
+    .replace(/\D/g, "");
+
+  const defaultCountryCode = (
+    process.env.NEXT_PUBLIC_WHATSAPP_DEFAULT_COUNTRY_CODE || "92"
+  ).replace(/\D/g, "");
+
+  // Example: 03337109448 -> 923337109448
+  if (digits.startsWith("0")) {
+    digits = `${defaultCountryCode}${digits.substring(1)}`;
+  }
+
   if (!digits) return "";
+
   return `https://wa.me/${digits}?text=${encodeURIComponent(message.trim())}`;
 }

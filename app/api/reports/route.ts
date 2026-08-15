@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       }
       rows = ["CLIENT | PHONE | EMAIL | APPOINTMENTS | LAST APPOINTMENT", ...Array.from(clients.values()).map((c) => `${c.client} | ${c.phone} | ${c.email} | ${c.count} | ${c.lastDate}`)];
     } else {
-      rows = ["CLIENT | DATE/TIME | SERVICE | DESIGNER | VISIT STATUS | PLACEMENT", ...appointments.map((a) => `${clean(a.client)} | ${clean(a.date)} ${clean(a.start)}-${clean(a.end)} | ${clean(a.service)} | ${clean(a.designerAssigned) || "—"} | ${clean(a.status)} | ${clean(a.placementStatus) || "Not placed"}`)];
+      rows = ["CLIENT | DATE/TIME | SERVICE | DESIGNER | VISIT STATUS | ORDER STATUS", ...appointments.map((a) => `${clean(a.client)} | ${clean(a.date)} ${clean(a.start)}-${clean(a.end)} | ${clean(a.service)} | ${clean(a.designerAssigned) || "—"} | ${clean(a.status)} | ${clean(a.placementStatus) || "Not placed"}`)];
     }
     if (rows.length === 2) rows.push("No records found for this date range.");
     const pdf = createTextPdf(title, `Range: ${from} to ${to}${status && status !== "All" ? ` | Status: ${status}` : ""}`, rows);

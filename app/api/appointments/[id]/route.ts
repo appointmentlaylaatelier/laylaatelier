@@ -39,7 +39,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         patch[key] = String(body[key] ?? "").trim();
       } else if (key === "placementStatus") {
         const value = String(body[key] ?? "Not placed");
-        if (!["Placed", "Not placed"].includes(value)) return NextResponse.json({ error: "Invalid placement status." }, { status: 400 });
+        if (!["Placed", "Not placed", "Follow-up"].includes(value)) return NextResponse.json({ error: "Invalid order status." }, { status: 400 });
         patch[key] = value;
       } else if (key === "called") {
         patch[key] = Boolean(body[key]);
