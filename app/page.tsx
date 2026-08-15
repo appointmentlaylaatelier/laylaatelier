@@ -6,7 +6,7 @@ import { DEFAULT_WHATSAPP_INQUIRY_MESSAGE } from "@/lib/whatsapp";
 
 type Role = "receptionist" | "manager";
 type Status = "Confirmed" | "Canceled" | "Arrived" | "No show" | "Walk-in";
-type PlacementStatus = "Placed" | "Not placed";
+type PlacementStatus = "Placed" | "Not placed" | "Follow-up";
 type Period = "All" | "Daily" | "Weekly" | "Monthly" | "Yearly" | "Custom";
 type SessionUser = { id: string; name: string; email: string; role: Role };
 type Appointment = {
