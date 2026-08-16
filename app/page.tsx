@@ -114,8 +114,14 @@ export default function Home() {
     setAppointments(v => [...v, created]);
 
     const emailResult = delivery?.email;
-    if (!emailResult?.ok) {
-      setToast(`Appointment booked · email failed: ${emailResult?.error || "Unknown email error"} · WhatsApp not opened`);
+    if (!emailResult) {
+      setToast("Appointment booked · server did not return email delivery status · WhatsApp not opened");
+      setTab("appointments");
+      return;
+    }
+
+    if (!emailResult.ok) {
+      setToast(`Appointment booked · email failed: ${emailResult.error || "Email delivery failed"} · WhatsApp not opened`);
       setTab("appointments");
       return;
     }

@@ -94,6 +94,11 @@ export async function POST(request: NextRequest) {
       emailMessageTemplate,
       subjectTemplate,
     });
+    const emailResult = delivery.email || {
+      ok: false,
+      error: "Email service did not return a delivery result.",
+    };
+    const responseDelivery = { email: emailResult };
 
     await db.collection("appointments").updateOne(
       { id: appointment.id },
@@ -106,7 +111,7 @@ export async function POST(request: NextRequest) {
               clientNumber: appointment.phone,
               url: whatsappUrl,
             },
-            email: delivery.email,
+            email: emailResult,
           },
           notificationAttemptedAt: new Date(),
           notificationContent: { whatsappMessageTemplate, emailMessageTemplate, subjectTemplate },
@@ -114,7 +119,7 @@ export async function POST(request: NextRequest) {
       },
     );
 
-    return NextResponse.json({ appointment, delivery, whatsappUrl }, { status: 201 });
+    return NextResponse.json({ appointment, delivery: responseDelivery, whatsappUrl }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Could not create appointment." }, { status: 500 });
   }
