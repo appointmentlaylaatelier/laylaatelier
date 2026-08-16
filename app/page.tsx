@@ -65,8 +65,13 @@ function rangeForPreset(period: Exclude<Period, "Custom" | "All">, anchor = new 
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options?.headers || {}) }, cache: "no-store" });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Request failed.");
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    console.error(`[API] ${options?.method || "GET"} ${url} failed`, { status: response.status, response: data });
+    const message = typeof data.error === "string" ? data.error : "Request failed.";
+    const backendError = typeof data.backendError === "string" ? data.backendError : "";
+    throw new Error(backendError ? `${message} Backend: ${backendError}` : message);
+  }
   return data as T;
 }
 
@@ -110,23 +115,35 @@ export default function Home() {
   const headings: Record<string, string> = { overview: role === "manager" ? "Showroom performance" : `Good afternoon, ${staffLabel}`, book: "Book an appointment", appointments: "All appointments", visits: "Today’s visit status", messages: "Client messaging", blacklist: "Blacklisted clients", analytics: "Client inflow" };
 
   async function createAppointment(appointment: BookingPayload) {
-    const { appointment: created, delivery, whatsappUrl } = await api<{ appointment: Appointment; delivery?: { email?: { ok: boolean; skipped?: boolean; error?: string } }; whatsappUrl?: string }>("/api/appointments", { method: "POST", body: JSON.stringify(appointment) });
+    const response = await api<{ appointment: Appointment; delivery?: { email?: { ok: boolean; skipped?: boolean; error?: string } }; whatsappUrl?: string }>("/api/appointments", { method: "POST", body: JSON.stringify(appointment) });
+    const { appointment: created, delivery, whatsappUrl } = response;
     setAppointments(v => [...v, created]);
 
     const emailResult = delivery?.email;
     if (!emailResult) {
+      console.error("[Appointment email] Backend response is missing delivery.email", response);
       setToast("Appointment booked · server did not return email delivery status · WhatsApp not opened");
       setTab("appointments");
       return;
     }
 
     if (!emailResult.ok) {
+      console.error("[Appointment email] Backend email error", {
+        appointmentId: created.id,
+        recipient: created.email,
+        error: emailResult.error || "Email delivery failed",
+        skipped: emailResult.skipped || false,
+        delivery,
+      });
       setToast(`Appointment booked · email failed: ${emailResult.error || "Email delivery failed"} · WhatsApp not opened`);
       setTab("appointments");
       return;
     }
 
+    console.info("[Appointment email] Email sent successfully", { appointmentId: created.id, recipient: created.email });
+
     if (!whatsappUrl) {
+      console.error("[Appointment WhatsApp] Backend response is missing whatsappUrl", response);
       setToast("Appointment booked · email sent · WhatsApp link unavailable");
       setTab("appointments");
       return;

@@ -22,6 +22,16 @@ type AppointmentDoc = {
 
 function unauthorized() { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
 
+function backendErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function maskedEmail(value: string) {
+  const [local, domain] = value.split("@");
+  if (!local || !domain) return value;
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
 export async function GET(request: NextRequest) {
   const session = sessionFromRequest(request);
   if (!session) return unauthorized();
@@ -89,15 +99,46 @@ export async function POST(request: NextRequest) {
 
     const whatsappMessage = renderWhatsAppInquiry(whatsappMessageTemplate, context);
     const whatsappUrl = buildWhatsAppClientUrl(appointment.phone, whatsappMessage);
-    const delivery = await sendClientMessage(context, {
-      channel: "email",
-      emailMessageTemplate,
-      subjectTemplate,
+
+    console.info("[appointments] Sending confirmation email", {
+      appointmentId: appointment.id,
+      to: maskedEmail(appointment.email),
+      subject: subjectTemplate,
     });
-    const emailResult = delivery.email || {
-      ok: false,
-      error: "Email service did not return a delivery result.",
-    };
+
+    let emailResult: { ok: boolean; skipped?: boolean; error?: string };
+    try {
+      const delivery = await sendClientMessage(context, {
+        channel: "email",
+        emailMessageTemplate,
+        subjectTemplate,
+      });
+      emailResult = delivery.email || {
+        ok: false,
+        error: "Email service did not return a delivery result.",
+      };
+    } catch (emailError) {
+      const message = backendErrorMessage(emailError);
+      console.error("[appointments] Confirmation email threw an unexpected backend error", {
+        appointmentId: appointment.id,
+        to: maskedEmail(appointment.email),
+        error: message,
+        stack: emailError instanceof Error ? emailError.stack : undefined,
+      });
+      emailResult = { ok: false, error: message };
+    }
+
+    if (!emailResult.ok) {
+      console.error("[appointments] Confirmation email failed", {
+        appointmentId: appointment.id,
+        to: maskedEmail(appointment.email),
+        error: emailResult.error || "Email delivery failed",
+        skipped: emailResult.skipped || false,
+      });
+    } else {
+      console.info("[appointments] Confirmation email sent", { appointmentId: appointment.id, to: maskedEmail(appointment.email) });
+    }
+
     const responseDelivery = { email: emailResult };
 
     await db.collection("appointments").updateOne(
@@ -120,7 +161,12 @@ export async function POST(request: NextRequest) {
     );
 
     return NextResponse.json({ appointment, delivery: responseDelivery, whatsappUrl }, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: "Could not create appointment." }, { status: 500 });
+  } catch (error) {
+    const message = backendErrorMessage(error);
+    console.error("[appointments] POST /api/appointments failed", {
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return NextResponse.json({ error: "Could not create appointment.", backendError: message }, { status: 500 });
   }
 }

@@ -147,11 +147,22 @@ function dotStuff(value: string) {
   return value.replace(/(^|\r\n)\./g, "$1..");
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function maskEmail(value: string) {
+  const [local, domain] = value.split("@");
+  if (!local || !domain) return value;
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
 async function sendViaGmailSmtp(to: string, subject: string, message: string, attachment?: EmailAttachment) {
   const config = getEmailConfig();
   if (!config) throw new Error("Email is not configured. Add EMAIL_USER and EMAIL_APP_PASSWORD in .env.local.");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new Error("Customer email address is invalid.");
 
+  let stage = "opening TLS connection to smtp.gmail.com:465";
   const socket = tls.connect({ host: "smtp.gmail.com", port: 465, servername: "smtp.gmail.com", rejectUnauthorized: true });
   socket.setTimeout(20_000);
   const readResponse = createSmtpReader(socket);
@@ -163,22 +174,24 @@ async function sendViaGmailSmtp(to: string, subject: string, message: string, at
       socket.once("error", reject);
     });
 
+    stage = "reading Gmail SMTP greeting";
     ensureSmtpCode(await readResponse(), 220);
 
-    const command = async (value: string, expected: number | number[]) => {
+    const command = async (value: string, expected: number | number[], nextStage: string) => {
+      stage = nextStage;
       socket.write(`${value}\r\n`);
       const response = await readResponse();
       ensureSmtpCode(response, expected);
       return response;
     };
 
-    await command("EHLO layla-showroom-manager", 250);
-    await command("AUTH LOGIN", 334);
-    await command(Buffer.from(config.user).toString("base64"), 334);
-    await command(Buffer.from(config.appPassword).toString("base64"), 235);
-    await command(`MAIL FROM:<${config.user}>`, 250);
-    await command(`RCPT TO:<${to}>`, [250, 251]);
-    await command("DATA", 354);
+    await command("EHLO layla-showroom-manager", 250, "sending EHLO");
+    await command("AUTH LOGIN", 334, "starting Gmail authentication");
+    await command(Buffer.from(config.user).toString("base64"), 334, "sending Gmail username");
+    await command(Buffer.from(config.appPassword).toString("base64"), 235, "authenticating Gmail app password");
+    await command(`MAIL FROM:<${config.user}>`, 250, "setting sender address");
+    await command(`RCPT TO:<${to}>`, [250, 251], "setting recipient address");
+    await command("DATA", 354, "starting message DATA");
 
     const baseHeaders = [
       `From: ${encodeHeader(config.fromName)} <${config.user}>`,
@@ -223,9 +236,13 @@ async function sendViaGmailSmtp(to: string, subject: string, message: string, at
       wireBody = `${headers}\r\n\r\n${encodeBody(message)}\r\n`;
     }
 
+    stage = "submitting message body to Gmail";
     socket.write(`${dotStuff(wireBody)}\r\n.\r\n`);
     ensureSmtpCode(await readResponse(), 250);
+    stage = "completed";
     socket.write("QUIT\r\n");
+  } catch (error) {
+    throw new Error(`Gmail SMTP failed while ${stage}: ${errorMessage(error)}`, { cause: error });
   } finally {
     socket.end();
   }
@@ -233,22 +250,34 @@ async function sendViaGmailSmtp(to: string, subject: string, message: string, at
 
 async function sendEmail(email: string, subject: string, message: string, attachment?: EmailAttachment): Promise<ChannelResult> {
   if (!getEmailConfig()) {
-    return {
-      ok: false,
-      skipped: true,
-      error: "Email is not configured. Add EMAIL_USER and EMAIL_APP_PASSWORD in .env.local.",
-    };
+    const error = "Email is not configured. Add EMAIL_USER and EMAIL_APP_PASSWORD in .env.local.";
+    console.error("[email] Configuration missing", {
+      hasEmailUser: Boolean(process.env.EMAIL_USER?.trim()),
+      hasEmailAppPassword: Boolean(process.env.EMAIL_APP_PASSWORD?.trim()),
+    });
+    return { ok: false, skipped: true, error };
   }
-  if (!email) return { ok: false, error: "Email address is missing." };
+  if (!email) {
+    console.error("[email] Recipient address is missing");
+    return { ok: false, error: "Email address is missing." };
+  }
+
+  const recipient = email.trim();
+  console.info("[email] SMTP send starting", { to: maskEmail(recipient), subject, hasAttachment: Boolean(attachment) });
 
   try {
-    await sendViaGmailSmtp(email.trim(), subject, message, attachment);
+    await sendViaGmailSmtp(recipient, subject, message, attachment);
+    console.info("[email] SMTP send succeeded", { to: maskEmail(recipient), subject });
     return { ok: true };
   } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : "Email delivery failed.",
-    };
+    const message = errorMessage(error);
+    console.error("[email] SMTP send failed", {
+      to: maskEmail(recipient),
+      subject,
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return { ok: false, error: message };
   }
 }
 
