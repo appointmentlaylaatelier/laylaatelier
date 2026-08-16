@@ -1,3 +1,5 @@
+import { once } from "node:events";
+import net, { type Socket } from "node:net";
 import tls, { type TLSSocket } from "node:tls";
 
 export type DeliveryChannel = "email" | "whatsapp" | "both";
@@ -58,7 +60,9 @@ function getEmailConfig() {
   return { user, appPassword, fromName };
 }
 
-function createSmtpReader(socket: TLSSocket) {
+type SmtpSocket = Socket | TLSSocket;
+
+function createSmtpReader(socket: SmtpSocket) {
   let buffer = "";
   let terminalError: Error | null = null;
   const waiters: Array<{ resolve: (value: SmtpResponse) => void; reject: (reason: Error) => void }> = [];
@@ -94,28 +98,39 @@ function createSmtpReader(socket: TLSSocket) {
     }
   }
 
-  socket.on("data", chunk => {
-    buffer += chunk.toString("utf8");
+  const onData = (chunk: Buffer | string) => {
+    buffer += chunk.toString();
     flush();
-  });
-  socket.on("error", error => {
+  };
+  const onError = (error: Error) => {
     terminalError = error;
     flush();
-  });
-  socket.on("timeout", () => {
+  };
+  const onTimeout = () => {
     terminalError = new Error("Gmail SMTP connection timed out.");
     socket.destroy(terminalError);
     flush();
-  });
+  };
 
-  return () => new Promise<SmtpResponse>((resolve, reject) => {
-    if (terminalError) {
-      reject(terminalError);
-      return;
-    }
-    waiters.push({ resolve, reject });
-    flush();
-  });
+  socket.on("data", onData);
+  socket.on("error", onError);
+  socket.on("timeout", onTimeout);
+
+  return {
+    read: () => new Promise<SmtpResponse>((resolve, reject) => {
+      if (terminalError) {
+        reject(terminalError);
+        return;
+      }
+      waiters.push({ resolve, reject });
+      flush();
+    }),
+    dispose: () => {
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("timeout", onTimeout);
+    },
+  };
 }
 
 function ensureSmtpCode(response: SmtpResponse, expected: number | number[]) {
@@ -162,30 +177,47 @@ async function sendViaGmailSmtp(to: string, subject: string, message: string, at
   if (!config) throw new Error("Email is not configured. Add EMAIL_USER and EMAIL_APP_PASSWORD in .env.local.");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new Error("Customer email address is invalid.");
 
-  let stage = "opening TLS connection to smtp.gmail.com:465";
-  const socket = tls.connect({ host: "smtp.gmail.com", port: 465, servername: "smtp.gmail.com", rejectUnauthorized: true });
+  const smtpHost = "smtp.gmail.com";
+  const smtpPort = 587;
+  let stage = `opening TCP connection to ${smtpHost}:${smtpPort}`;
+  let socket: SmtpSocket = net.createConnection({ host: smtpHost, port: smtpPort });
   socket.setTimeout(20_000);
-  const readResponse = createSmtpReader(socket);
+  let reader = createSmtpReader(socket);
 
   try {
-    await new Promise<void>((resolve, reject) => {
-      if (socket.authorized) { resolve(); return; }
-      socket.once("secureConnect", resolve);
-      socket.once("error", reject);
-    });
+    await once(socket, "connect");
 
     stage = "reading Gmail SMTP greeting";
-    ensureSmtpCode(await readResponse(), 220);
+    ensureSmtpCode(await reader.read(), 220);
 
     const command = async (value: string, expected: number | number[], nextStage: string) => {
       stage = nextStage;
       socket.write(`${value}\r\n`);
-      const response = await readResponse();
+      const response = await reader.read();
       ensureSmtpCode(response, expected);
       return response;
     };
 
-    await command("EHLO layla-showroom-manager", 250, "sending EHLO");
+    // Port 587 starts as a normal TCP SMTP connection and then upgrades to TLS.
+    await command("EHLO layla-showroom-manager", 250, "sending EHLO before STARTTLS");
+    await command("STARTTLS", 220, "requesting STARTTLS from Gmail");
+
+    // Detach the plaintext SMTP reader before TLS takes ownership of the socket.
+    reader.dispose();
+    stage = "upgrading Gmail SMTP connection to TLS with STARTTLS";
+
+    const tlsSocket = tls.connect({
+      socket: socket as Socket,
+      servername: smtpHost,
+      rejectUnauthorized: true,
+    });
+    tlsSocket.setTimeout(20_000);
+    socket = tlsSocket;
+    reader = createSmtpReader(socket);
+    await once(tlsSocket, "secureConnect");
+
+    // RFC 3207 requires EHLO again after STARTTLS.
+    await command("EHLO layla-showroom-manager", 250, "sending EHLO after STARTTLS");
     await command("AUTH LOGIN", 334, "starting Gmail authentication");
     await command(Buffer.from(config.user).toString("base64"), 334, "sending Gmail username");
     await command(Buffer.from(config.appPassword).toString("base64"), 235, "authenticating Gmail app password");
@@ -238,12 +270,14 @@ async function sendViaGmailSmtp(to: string, subject: string, message: string, at
 
     stage = "submitting message body to Gmail";
     socket.write(`${dotStuff(wireBody)}\r\n.\r\n`);
-    ensureSmtpCode(await readResponse(), 250);
+    ensureSmtpCode(await reader.read(), 250);
     stage = "completed";
     socket.write("QUIT\r\n");
   } catch (error) {
-    throw new Error(`Gmail SMTP failed while ${stage}: ${errorMessage(error)}`, { cause: error });
+    const detail = errorMessage(error) || (error instanceof Error && error.cause ? errorMessage(error.cause) : "Unknown SMTP connection error");
+    throw new Error(`Gmail SMTP failed while ${stage}: ${detail}`, { cause: error });
   } finally {
+    reader.dispose();
     socket.end();
   }
 }
