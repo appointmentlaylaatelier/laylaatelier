@@ -13,8 +13,8 @@ export type ClientMessageContext = {
   time: string;
 };
 
-export const DEFAULT_CLIENT_MESSAGE01 = "Hello {name} from LAYLA Doha, your {service} appointment is scheduled for {date} at {time}.";
-export const DEFAULT_EMAIL_SUBJECT01 = "Appointment Confirmation from LAYLA Atelier";
+export const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER .\n\nService: {service}\nDate: {date}\nTime: {time}\n\nThank you for choosing LAYLA Atelier. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";
+export const DEFAULT_EMAIL_SUBJECT01 = "Appointment Confirmation from LAYLA ATELIER";
 
 export const DEFAULT_CLIENT_MESSAGE02 = "May the blessings of Eid bring you joy, peace, and prosperity. Wishing you a wonderful celebration with your loved ones.";
 export const DEFAULT_EMAIL_SUBJECT02 = "Eid Mubarak";
