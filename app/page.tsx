@@ -110,28 +110,24 @@ export default function Home() {
   const headings: Record<string, string> = { overview: role === "manager" ? "Showroom performance" : `Good afternoon, ${staffLabel}`, book: "Book an appointment", appointments: "All appointments", visits: "Today’s visit status", messages: "Client messaging", blacklist: "Blacklisted clients", analytics: "Client inflow" };
 
   async function createAppointment(appointment: BookingPayload) {
-    // Open a tab during the user's click so browsers do not block the later WhatsApp redirect.
-    const whatsappWindow = window.open("about:blank", "_blank");
-    try {
-      const { appointment: created, delivery, whatsappUrl } = await api<{ appointment: Appointment; delivery?: { email?: { ok: boolean; skipped?: boolean; error?: string } }; whatsappUrl?: string }>("/api/appointments", { method: "POST", body: JSON.stringify(appointment) });
-      setAppointments(v => [...v, created]);
+    const { appointment: created, delivery, whatsappUrl } = await api<{ appointment: Appointment; delivery?: { email?: { ok: boolean; skipped?: boolean; error?: string } }; whatsappUrl?: string }>("/api/appointments", { method: "POST", body: JSON.stringify(appointment) });
+    setAppointments(v => [...v, created]);
 
-      if (whatsappUrl) {
-        if (whatsappWindow) whatsappWindow.location.href = whatsappUrl;
-        else window.open(whatsappUrl, "_blank", "noopener,noreferrer");
-      } else {
-        whatsappWindow?.close();
-      }
-
-      const emailResult = delivery?.email;
-      setToast(emailResult?.ok
-        ? "Appointment booked · WhatsApp inquiry opened · email sent"
-        : `Appointment booked · WhatsApp inquiry opened · email failed: ${emailResult?.error || "Unknown email error"}`);
+    const emailResult = delivery?.email;
+    if (!emailResult?.ok) {
+      setToast(`Appointment booked · email failed: ${emailResult?.error || "Unknown email error"} · WhatsApp not opened`);
       setTab("appointments");
-    } catch (error) {
-      whatsappWindow?.close();
-      throw error;
+      return;
     }
+
+    if (!whatsappUrl) {
+      setToast("Appointment booked · email sent · WhatsApp link unavailable");
+      setTab("appointments");
+      return;
+    }
+
+    setToast("Appointment booked · email sent · opening WhatsApp inquiry");
+    window.location.assign(whatsappUrl);
   }
   async function updateAppointment(id: string, patch: Partial<Appointment>) {
     await api(`/api/appointments/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
