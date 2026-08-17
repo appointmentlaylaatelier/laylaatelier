@@ -15,8 +15,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const email = String(body.email || "").trim().toLowerCase();
     if (!email) return NextResponse.json({ error: "Enter your account email address." }, { status: 400 });
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_APP_PASSWORD) {
-      return NextResponse.json({ error: "Password reset email is not configured. Add EMAIL_USER and EMAIL_APP_PASSWORD in .env.local." }, { status: 503 });
+    if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
+      return NextResponse.json({ error: "Password reset email is not configured. Add RESEND_API_KEY and RESEND_FROM_EMAIL to the server environment." }, { status: 503 });
     }
 
     await ensureBootstrap();
