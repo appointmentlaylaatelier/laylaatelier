@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const name = String(body.name || "").trim(); const phone = String(body.phone || "").trim(); const reason = String(body.reason || "").trim();
     if (!name || !phone || !reason) return NextResponse.json({ error: "Name, phone and reason are required." }, { status: 400 });
+    if (!/^\d{7,15}$/.test(phone)) return NextResponse.json({ error: "Phone number must contain digits only (7 to 15 digits)." }, { status: 400 });
     const normalizedPhone = phone.replace(/\D/g, "").replace(/^974/, "");
     const db = await getDb();
     const item = { id: randomUUID(), name, phone, normalizedPhone, reason, addedAt: new Date(), addedBy: session.id };

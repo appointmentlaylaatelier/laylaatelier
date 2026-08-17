@@ -4,11 +4,12 @@ import { sessionFromRequest } from "@/lib/auth";
 import { ensureBootstrap } from "@/lib/bootstrap";
 import { getDb } from "@/lib/mongodb";
 import { DEFAULT_CLIENT_MESSAGE02, DEFAULT_EMAIL_SUBJECT02, deliverySummary, sendClientMessage, type EmailAttachment } from "@/lib/messaging";
+import { formatTimeRange12 } from "@/lib/time";
 
 export const runtime = "nodejs";
 
 type Audience = "all" | "week" | "month" | "year" | "custom";
-type AppointmentDoc = { client: string; phone: string; email: string; service: string; date: string; start: string };
+type AppointmentDoc = { client: string; phone: string; email: string; service: string; date: string; start: string; end: string };
 
 function isoDate(date = new Date()) {
   const y = date.getFullYear();
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     let emailDelivered = 0, emailFailed = 0, emailSkipped = 0;
     for (const client of clients) {
-      const context = { name: client.client, phone: client.phone, email: client.email, service: client.service, date: client.date, time: client.start };
+      const context = { name: client.client, phone: client.phone, email: client.email, service: client.service, date: client.date, time: formatTimeRange12(client.start, client.end) };
       const result = await sendClientMessage(context, { channel: "email", messageTemplate: message, subjectTemplate: subject, attachment });
       const summary = deliverySummary(result);
       emailDelivered += summary.delivered; emailFailed += summary.failed; emailSkipped += summary.skipped;

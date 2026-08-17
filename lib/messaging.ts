@@ -11,7 +11,7 @@ export type ClientMessageContext = {
   time: string;
 };
 
-export const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER .\n\nService: {service}\nDate: {date}\nTime: {time}\n\nThank you for choosing LAYLA Atelier. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";
+export const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER.\n\nService: {service}\nDate: {date}\nTime slot: {time}\n\nThank you for choosing LAYLA ATELIER. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";
 export const DEFAULT_EMAIL_SUBJECT01 = "Appointment Confirmation from LAYLA ATELIER";
 
 export const DEFAULT_CLIENT_MESSAGE02 = "May the blessings of Eid bring you joy, peace, and prosperity. Wishing you a wonderful celebration with your loved ones.";
@@ -53,13 +53,15 @@ export function renderClientMessage(value: string, context: ClientMessageContext
     "{time}": context.time,
     "{service}": context.service,
   };
-  return Object.entries(replacements).reduce((text, [key, replacement]) => text.split(key).join(replacement), value);
+  return Object.entries(replacements)
+    .reduce((text, [key, replacement]) => text.split(key).join(replacement), value)
+    .replace(/\batelier\b/gi, "ATELIER");
 }
 
 function getEmailConfig(): ResendConfig | null {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
-  const fromName = process.env.RESEND_FROM_NAME?.trim() || process.env.EMAIL_FROM_NAME?.trim() || "LAYLA Atelier";
+  const fromName = process.env.RESEND_FROM_NAME?.trim() || process.env.EMAIL_FROM_NAME?.trim() || "LAYLA ATELIER";
   const replyTo = process.env.RESEND_REPLY_TO?.trim() || process.env.EMAIL_USER?.trim() || undefined;
 
   if (!apiKey || !fromEmail) return null;
@@ -171,8 +173,7 @@ async function sendEmail(email: string, subject: string, message: string, attach
     return { ok: false, skipped: true, error };
   }
   if (!email) {
-    console.error("[email] Recipient address is missing");
-    return { ok: false, error: "Email address is missing." };
+    return { ok: false, skipped: true, error: "No customer email provided." };
   }
 
   const recipient = email.trim();

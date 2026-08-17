@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { DEFAULT_WHATSAPP_INQUIRY_MESSAGE } from "@/lib/whatsapp";
+import { formatTime12, formatTimeRange12, minutesToTimeValue, timeToMinutes } from "@/lib/time";
 
 type Role = "receptionist" | "manager";
 type Status = "Confirmed" | "Canceled" | "Arrived" | "No show" | "Walk-in";
@@ -24,7 +25,7 @@ type DateRange = { period: Period; from: string; to: string };
 const services = ["Alterations", "Evening Gowns", "Bridal Gowns", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"];
 const statusOptions: Status[] = ["Confirmed", "Canceled", "Arrived", "No show", "Walk-in"];
 const placementOptions: PlacementStatus[] = ["Not placed", "Placed", "Follow-up"];
-const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER .\n\nService: {service}\nDate: {date}\nTime: {time}\n\nThank you for choosing LAYLA Atelier. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";
+const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER.\n\nService: {service}\nDate: {date}\nTime slot: {time}\n\nThank you for choosing LAYLA ATELIER. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";
 const DEFAULT_EMAIL_SUBJECT01 = "Appointment Confirmation from LAYLA ATELIER";
 const DEFAULT_CLIENT_MESSAGE02 = "May the blessings of Eid bring you joy, peace, and prosperity. Wishing you a wonderful celebration with your loved ones.";
 const DEFAULT_EMAIL_SUBJECT02 = "Eid Mubarak";
@@ -75,9 +76,10 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
-function downloadReport(type: "appointments" | "clients", range: DateRange, status?: string) {
+function downloadReport(type: "appointments" | "clients", range: DateRange, status?: string, service?: string) {
   const params = new URLSearchParams({ type, from: range.from, to: range.to });
   if (status && status !== "All") params.set("status", status);
+  if (service && service !== "All services") params.set("service", service);
   window.location.assign(`/api/reports?${params.toString()}`);
 }
 
@@ -119,37 +121,40 @@ export default function Home() {
     const { appointment: created, delivery, whatsappUrl } = response;
     setAppointments(v => [...v, created]);
 
-    const emailResult = delivery?.email;
-    if (!emailResult) {
-      console.error("[Appointment email] Backend response is missing delivery.email", response);
-      setToast("Appointment booked · server did not return email delivery status · WhatsApp not opened");
-      setTab("appointments");
-      return;
-    }
+    const hasCustomerEmail = Boolean(created.email.trim());
+    if (hasCustomerEmail) {
+      const emailResult = delivery?.email;
+      if (!emailResult) {
+        console.error("[Appointment email] Backend response is missing delivery.email", response);
+        setToast("Appointment booked · server did not return email delivery status · WhatsApp not opened");
+        setTab("appointments");
+        return;
+      }
 
-    if (!emailResult.ok) {
-      console.error("[Appointment email] Backend email error", {
-        appointmentId: created.id,
-        recipient: created.email,
-        error: emailResult.error || "Email delivery failed",
-        skipped: emailResult.skipped || false,
-        delivery,
-      });
-      setToast(`Appointment booked · email failed: ${emailResult.error || "Email delivery failed"} · WhatsApp not opened`);
-      setTab("appointments");
-      return;
-    }
+      if (!emailResult.ok) {
+        console.error("[Appointment email] Backend email error", {
+          appointmentId: created.id,
+          recipient: created.email,
+          error: emailResult.error || "Email delivery failed",
+          skipped: emailResult.skipped || false,
+          delivery,
+        });
+        setToast(`Appointment booked · email failed: ${emailResult.error || "Email delivery failed"} · WhatsApp not opened`);
+        setTab("appointments");
+        return;
+      }
 
-    console.info("[Appointment email] Email sent successfully", { appointmentId: created.id, recipient: created.email });
+      console.info("[Appointment email] Email sent successfully", { appointmentId: created.id, recipient: created.email });
+    }
 
     if (!whatsappUrl) {
       console.error("[Appointment WhatsApp] Backend response is missing whatsappUrl", response);
-      setToast("Appointment booked · email sent · WhatsApp link unavailable");
+      setToast(hasCustomerEmail ? "Appointment booked · email sent · WhatsApp link unavailable" : "Appointment booked · WhatsApp link unavailable");
       setTab("appointments");
       return;
     }
 
-    setToast("Appointment booked · email sent · opening WhatsApp inquiry");
+    setToast(hasCustomerEmail ? "Appointment booked · email sent · opening WhatsApp inquiry" : "Appointment booked · opening WhatsApp inquiry");
     window.location.assign(whatsappUrl);
   }
   async function updateAppointment(id: string, patch: Partial<Appointment>) {
@@ -163,6 +168,16 @@ export default function Home() {
   async function addBlacklisted(item: Omit<Blacklisted, "id" | "date">) {
     const { item: created } = await api<{ item: Blacklisted }>("/api/blacklist", { method: "POST", body: JSON.stringify(item) });
     setBlacklist(v => [created, ...v]); setToast("Client added to blacklist");
+  }
+  async function updateBlacklisted(id: string, patch: Omit<Blacklisted, "id" | "date">) {
+    await api(`/api/blacklist/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+    setBlacklist(v => v.map(item => item.id === id ? { ...item, ...patch } : item));
+    setToast("Blacklisted client updated");
+  }
+  async function deleteBlacklisted(id: string) {
+    await api(`/api/blacklist/${id}`, { method: "DELETE" });
+    setBlacklist(v => v.filter(item => item.id !== id));
+    setToast("Blacklisted client deleted");
   }
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" }); setUser(null); setAppointments([]); setBlacklist([]);
@@ -182,7 +197,7 @@ export default function Home() {
       {tab === "appointments" && <Appointments appointments={appointments} blacklist={blacklist} manager={role === "manager"} onChange={updateAppointment} onDelete={deleteAppointment} />}
       {tab === "visits" && <Visits appointments={appointments} onChange={updateAppointment} />}
       {tab === "messages" && <Messaging appointments={appointments} onNotify={setToast} />}
-      {tab === "blacklist" && <Blacklist items={blacklist} onAdd={addBlacklisted} />}
+      {tab === "blacklist" && <Blacklist items={blacklist} onAdd={addBlacklisted} onUpdate={updateBlacklisted} onDelete={deleteBlacklisted} />}
       {tab === "analytics" && <Analytics appointments={appointments} />}
     </main>
     {toast && <div className="toast"><span>✓</span>{toast}</div>}
@@ -292,23 +307,49 @@ function ManagerOverview({ appointments, onTab }: { appointments: Appointment[];
   const attended = filtered.filter(a => a.status === "Arrived").length;
   const showRate = filtered.length ? Math.round(attended / filtered.length * 100) : 0;
   return <div className="content"><div className="manager-intro report-intro"><div><p>Operational summary · Doha</p><h2>{range.period === "All" ? "All clients to date" : range.period === "Custom" ? "Custom client view" : `${range.period} client flow`}</h2></div><DateRangeControls range={range} setRange={setRange} appointments={appointments} onExport={() => downloadReport("clients", range)} /></div>
-    <section className="stats-grid"><Stat label="UNIQUE CLIENTS" value={uniqueClientCount(filtered)} note={`${range.from} → ${range.to}`} tone="green" /><Stat label="BOOKINGS" value={filtered.length} note="Appointments in selected range" /><Stat label="SHOW RATE" value={`${showRate}%`} note="Arrived visits" tone="clay" /><Stat label="CALL COVERAGE" value={`${filtered.length ? Math.round(filtered.filter(a => a.called).length / filtered.length * 100) : 0}%`} note="Confirmation activity" /></section>
-    <section className="two-col manager-grid"><div className="panel chart-panel"><PanelTitle title="Client inflow" action="Full analytics" onClick={() => onTab("analytics")} /><MiniChart items={filtered} from={range.from} to={range.to} /></div><div className="panel"><PanelTitle title="Attendance" /><div className="pulse"><div className="ring"><b>{showRate}%</b><span>attendance</span></div><ul><li><i className="dot arrived" />Attended <b>{attended}</b></li><li><i className="dot confirmed" />Confirmed <b>{filtered.filter(a => a.status === "Confirmed").length}</b></li><li><i className="dot booked" />Walk-ins <b>{filtered.filter(a => a.status === "Walk-in").length}</b></li></ul></div></div></section>
+    <section className="stats-grid"><Stat label="CLIENTS" value={uniqueClientCount(filtered)} note={`${range.from} → ${range.to}`} tone="green" /><Stat label="BOOKINGS" value={filtered.length} note="Appointments in selected range" /><Stat label="SHOW RATE" value={`${showRate}%`} note="Arrived visits" tone="clay" /><Stat label="CALL COVERAGE" value={`${filtered.length ? Math.round(filtered.filter(a => a.called).length / filtered.length * 100) : 0}%`} note="Confirmation activity" /></section>
+    <section className="two-col manager-grid"><div className="panel chart-panel"><PanelTitle title="Client inflow" action="Full analytics" onClick={() => onTab("analytics")} /><MiniChart items={filtered} from={range.from} to={range.to} /></div><div className="panel"><PanelTitle title="Appointment status" /><StatusDonut items={filtered} /></div></section>
     <div className="panel"><PanelTitle title="Clients in selected range" action="View register" onClick={() => onTab("appointments")} /><AppointmentRows items={filtered.slice(0, 8)} compact manager /></div>
   </div>;
 }
 
 function PanelTitle({ title, action, onClick }: { title: string; action?: string; onClick?: () => void }) { return <div className="panel-title"><h3>{title}</h3>{action && <button onClick={onClick}>{action} →</button>}</div>; }
-function AppointmentRows({ items, compact, manager }: { items: Appointment[]; compact?: boolean; manager?: boolean }) { return <div className="appointment-rows">{items.length ? items.map(a => <div className="appointment-row" key={a.id}><time>{a.start}</time><span className="mini-avatar">{initials(a.client)}</span><div className="client"><b>{a.client}</b><small>{a.service}</small></div>{manager && <span className={`call ${a.called ? "yes" : ""}`}>{a.called ? "Called" : "Not called"}</span>}<span className={`status ${a.status.toLowerCase().replace(" ", "-")}`}>{a.status}</span>{!compact && <button className="more">•••</button>}</div>) : <div className="empty">No appointments in this range.</div>}</div>; }
 
-function renderBookingTemplate(template: string, form: { client: string; service: string; date: string; start: string }) {
+function StatusDonut({ items }: { items: Appointment[] }) {
+  const segments = [
+    { status: "Walk-in" as Status, label: "Walk-in", color: "#d98b55" },
+    { status: "Arrived" as Status, label: "Arrived", color: "#2c8c7a" },
+    { status: "Canceled" as Status, label: "Canceled", color: "#b85d67" },
+    { status: "No show" as Status, label: "No-show", color: "#7d6b9d" },
+  ].map(item => ({ ...item, count: items.filter(a => a.status === item.status).length }));
+  const total = segments.reduce((sum, item) => sum + item.count, 0);
+  let cursor = 0;
+  const gradient = total ? `conic-gradient(${segments.map(item => {
+    const start = cursor;
+    cursor += item.count / total * 100;
+    return `${item.color} ${start}% ${cursor}%`;
+  }).join(", ")})` : "#e9ecec";
+  return <div className="status-donut-wrap"><div className="status-donut" style={{ background: gradient }}><div><b>{total}</b><span>tracked</span></div></div><ul className="status-donut-legend">{segments.map(item => <li key={item.status}><i style={{ background: item.color }} /><span>{item.label}</span><b>{item.count}</b></li>)}</ul></div>;
+}
+
+function AppointmentRows({ items, compact, manager }: { items: Appointment[]; compact?: boolean; manager?: boolean }) { return <div className="appointment-rows">{items.length ? items.map(a => <div className="appointment-row" key={a.id}><time>{formatTimeRange12(a.start, a.end)}</time><span className="mini-avatar">{initials(a.client)}</span><div className="client"><b>{a.client}</b><small>{a.service}</small></div>{manager && <span className={`call ${a.called ? "yes" : ""}`}>{a.called ? "Called" : "Not called"}</span>}<span className={`status ${a.status.toLowerCase().replace(" ", "-")}`}>{a.status}</span>{!compact && <button className="more">•••</button>}</div>) : <div className="empty">No appointments in this range.</div>}</div>; }
+
+function renderBookingTemplate(template: string, form: { client: string; service: string; date: string; start: string; end: string }) {
   const replacements: Record<string, string> = {
     "{name}": form.client.trim() || "Client",
     "{date}": form.date || "appointment date",
-    "{time}": form.start || "appointment time",
+    "{time}": form.start && form.end ? formatTimeRange12(form.start, form.end) : "appointment time",
     "{service}": form.service || "your appointment",
   };
-  return Object.entries(replacements).reduce((text, [key, value]) => text.split(key).join(value), template);
+  return Object.entries(replacements)
+    .reduce((text, [key, value]) => text.split(key).join(value), template)
+    .replace(/\batelier\b/gi, "ATELIER");
+}
+
+function TimeSelect({ value, onChange, ariaLabel }: { value: string; onChange: (value: string) => void; ariaLabel: string }) {
+  const standard = Array.from({ length: 96 }, (_, index) => minutesToTimeValue(index * 15));
+  const options = standard.includes(value) ? standard : [...standard, value].sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
+  return <select required value={value} onChange={e => onChange(e.target.value)} aria-label={ariaLabel}>{options.map(option => <option key={option} value={option}>{formatTime12(option)}</option>)}</select>;
 }
 
 function BookingForm({ appointments, blacklist, onBook }: { appointments: Appointment[]; blacklist: Blacklisted[]; onBook: (a: BookingPayload) => Promise<void> }) {
@@ -319,6 +360,10 @@ function BookingForm({ appointments, blacklist, onBook }: { appointments: Appoin
   const savedTemplate = { subject: DEFAULT_EMAIL_SUBJECT01, message: DEFAULT_CLIENT_MESSAGE01 };
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const blocked = blacklist.find(b => normalizePhone(b.phone) === normalizePhone(form.phone) && form.phone.length > 7);
+  const normalizedEmail = form.email.trim().toLowerCase();
+  const phoneConflict = form.phone.length > 0 && appointments.some(a => normalizePhone(a.phone) === normalizePhone(form.phone));
+  const emailConflict = normalizedEmail.length > 0 && appointments.some(a => a.email.trim().toLowerCase() === normalizedEmail);
+  const emailLooksValid = !normalizedEmail || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
 
   function appendVariable(target: "whatsapp" | "email", variable: string) {
     const append = (current: string) => `${current}${current.endsWith(" ") || current.endsWith("\n") ? "" : " "}${variable}`;
@@ -330,11 +375,16 @@ function BookingForm({ appointments, blacklist, onBook }: { appointments: Appoin
   }
 
   async function submit(e: FormEvent) {
-    e.preventDefault(); if (blocked) return; setError("");
+    e.preventDefault(); setError("");
+    if (blocked) { setError("This phone number belongs to a blacklisted client."); return; }
+    if (!/^\d{7,15}$/.test(form.phone)) { setError("Phone number must contain digits only (7 to 15 digits)."); return; }
+    if (phoneConflict) { setError("This phone number is already used by another appointment."); return; }
+    if (!emailLooksValid) { setError("Please enter a valid email address."); return; }
+    if (emailConflict) { setError("This email address is already used by another appointment."); return; }
     if (form.end <= form.start) { setError("The end time must be later than the start time."); return; }
     if (!whatsappMessage.trim() || !emailSubject.trim() || !emailMessage.trim()) { setError("WhatsApp inquiry, email subject, and email message are required."); return; }
     setBusy(true);
-    try { await onBook({ ...form, whatsappMessage, emailSubject, emailMessage }); }
+    try { await onBook({ ...form, phone: form.phone.trim(), email: normalizedEmail, whatsappMessage, emailSubject, emailMessage }); }
     catch (bookingError) { setError(bookingError instanceof Error ? bookingError.message : "Could not book appointment."); }
     finally { setBusy(false); }
   }
@@ -344,54 +394,110 @@ function BookingForm({ appointments, blacklist, onBook }: { appointments: Appoin
   const emailPreview = renderBookingTemplate(emailMessage, form);
 
   return <div className="content form-layout"><form className="panel booking-form" onSubmit={submit}><div className="section-head"><span>01</span><div><h3>Client details</h3></div></div>{blocked && <div className="blocked-alert"><b>⊘ This client is blacklisted</b><span>{blocked.name} · {blocked.reason}. An appointment cannot be created for this number.</span></div>}
-    <div className="form-grid"><label>Client name<input required placeholder="e.g. Noor Ahmed" value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} /></label><label>Client WhatsApp number<input required placeholder="+974 XXXX XXXX" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label><label className="full">Email address<input required type="email" placeholder="client@email.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label></div>
-    <div className="section-head second"><span>02</span><div><h3>Appointment details</h3><p>Select the service and preferred time.</p></div></div><div className="form-grid"><label className="full">Service<select value={form.service} onChange={e => setForm({ ...form, service: e.target.value })}>{services.map(s => <option key={s}>{s}</option>)}</select></label><label>Date<input required type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label><div className="time-pair"><label>From<input required type="time" value={form.start} onChange={e => setForm({ ...form, start: e.target.value })} /></label><label>To<input required type="time" value={form.end} onChange={e => setForm({ ...form, end: e.target.value })} /></label></div><label className="full">Designer assigned (optional)<input type="text" placeholder="Designer name" value={form.designerAssigned || ""} onChange={e => setForm({ ...form, designerAssigned: e.target.value })} /></label><label className="full">Notes<textarea placeholder="Preferences, occasion, or special requirements…" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label></div>
+    <div className="form-grid"><label>Client name<input required placeholder="e.g. Noor Ahmed" value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} /></label><label>Client WhatsApp number<input required inputMode="numeric" pattern="[0-9]*" placeholder="974XXXXXXXX" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })} aria-invalid={phoneConflict || undefined} />{phoneConflict && <small className="field-error">This phone number is already in use.</small>}</label><label className="full">Email address (optional)<input type="email" placeholder="client@email.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} aria-invalid={(!emailLooksValid || emailConflict) || undefined} />{!emailLooksValid && <small className="field-error">Enter a valid email format.</small>}{emailLooksValid && emailConflict && <small className="field-error">This email address is already in use.</small>}</label></div>
+    <div className="section-head second"><span>02</span><div><h3>Appointment details</h3><p>Select the service and preferred time.</p></div></div><div className="form-grid"><label className="full">Service<select value={form.service} onChange={e => setForm({ ...form, service: e.target.value })}>{services.map(s => <option key={s}>{s}</option>)}</select></label><label>Date<input required type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label><div className="time-pair"><label>From<TimeSelect value={form.start} onChange={start => setForm({ ...form, start })} ariaLabel="Appointment start time" /></label><label>To<TimeSelect value={form.end} onChange={end => setForm({ ...form, end })} ariaLabel="Appointment end time" /></label></div><label className="full">Designer assigned (optional)<input type="text" placeholder="Designer name" value={form.designerAssigned || ""} onChange={e => setForm({ ...form, designerAssigned: e.target.value })} /></label><label className="full">Notes<textarea placeholder="Preferences, occasion, or special requirements…" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label></div>
     <div className="section-head second notification-section-head"><span>03</span><div><h3>Client notification</h3></div><button type="button" className="secondary-button template-restore" onClick={restoreSavedTemplate}>Use saved template</button></div>
     <div className="booking-message-grid"><div className="booking-message-editor"><label>WhatsApp inquiry<textarea value={whatsappMessage} onChange={e => setWhatsappMessage(e.target.value)} maxLength={4000} /></label><div className="booking-variable-row"><span>Insert:</span>{["{name}", "{date}", "{time}", "{service}"].map(variable => <button type="button" key={variable} onClick={() => appendVariable("whatsapp", variable)}>{variable}</button>)}</div></div><div className="booking-message-editor"><label>Email subject<input value={emailSubject} onChange={e => setEmailSubject(e.target.value)} maxLength={200} /></label><label>Email message<textarea value={emailMessage} onChange={e => setEmailMessage(e.target.value)} maxLength={4000} /></label><div className="booking-variable-row"><span>Insert:</span>{["{name}", "{date}", "{time}", "{service}"].map(variable => <button type="button" key={variable} onClick={() => appendVariable("email", variable)}>{variable}</button>)}</div></div></div>
-    {error && <p className="form-error">{error}</p>}<div className="form-actions"><button className="primary" disabled={!!blocked || busy}>{busy ? "Saving…" : "Book & open WhatsApp inquiry →"}</button></div>
-  </form><aside className="booking-aside"><div className="panel notification-card"><span className="whatsapp">◉</span><h3>Notification preview</h3><div className="message-preview booking-channel-preview"><small>WHATSAPP INQUIRY</small><p>{whatsappPreview}</p></div><div className="message-preview booking-channel-preview"><small>EMAIL SUBJECT</small><b>{emailSubjectPreview}</b><p>{emailPreview}</p></div></div><div className="panel policy"><h3>Available placeholders</h3><p><code>{`{name}`}</code>, <code>{`{date}`}</code>, <code>{`{time}`}</code>, and <code>{`{service}`}</code> are replaced automatically when the inquiry/email is prepared.</p></div></aside></div>;
+    {error && <p className="form-error">{error}</p>}<div className="form-actions"><button className="primary" disabled={!!blocked || busy || phoneConflict || emailConflict || !emailLooksValid}>{busy ? "Saving…" : "Book & open WhatsApp inquiry →"}</button></div>
+  </form><aside className="booking-aside"><div className="panel notification-card"><span className="whatsapp">◉</span><h3>Notification preview</h3><div className="message-preview booking-channel-preview"><small>WHATSAPP INQUIRY</small><p>{whatsappPreview}</p></div><div className="message-preview booking-channel-preview"><small>EMAIL SUBJECT</small><b>{emailSubjectPreview}</b><p>{emailPreview}</p></div></div><div className="panel policy"><h3>Available placeholders</h3><p><code>{`{name}`}</code>, <code>{`{date}`}</code>, <code>{`{time}`}</code>, and <code>{`{service}`}</code> are replaced automatically. <code>{`{time}`}</code> is shown as a 12-hour <b>From … to …</b> time slot.</p></div></aside></div>;
 }
 
 function Appointments({ appointments, blacklist, manager, onChange, onDelete }: { appointments: Appointment[]; blacklist: Blacklisted[]; manager: boolean; onChange: (id: string, patch: Partial<Appointment>) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
   const [range, setRange] = useState<DateRange>(() => rangeForPreset("Monthly"));
   const [filter, setFilter] = useState("All");
+  const [serviceFilter, setServiceFilter] = useState("All services");
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Appointment | null>(null);
   const [actionError, setActionError] = useState("");
-  const filtered = useMemo(() => appointments.filter(a => (filter === "All" || a.status === filter) && inRange(a.date, range.from, range.to)), [appointments, filter, range]);
+  const filtered = useMemo(() => appointments.filter(a => (filter === "All" || a.status === filter) && (serviceFilter === "All services" || a.service === serviceFilter) && inRange(a.date, range.from, range.to)), [appointments, filter, serviceFilter, range]);
+  const calendarItems = useMemo(() => appointments.filter(a => (filter === "All" || a.status === filter) && (serviceFilter === "All services" || a.service === serviceFilter)), [appointments, filter, serviceFilter]);
 
   async function removeAppointment(appointment: Appointment) {
     setMenuId(null); setActionError("");
-    if (!window.confirm(`Delete ${appointment.client}'s appointment on ${appointment.date} at ${appointment.start}? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete ${appointment.client}'s appointment on ${appointment.date}, ${formatTimeRange12(appointment.start, appointment.end)}? This cannot be undone.`)) return;
     try { await onDelete(appointment.id); }
     catch (error) { setActionError(error instanceof Error ? error.message : "Could not delete appointment."); }
   }
 
-  return <div className="content"><div className="filters filters-rich"><DateRangeControls range={range} setRange={setRange} appointments={appointments} onExport={() => downloadReport("appointments", range, filter)} /><select value={filter} onChange={e => setFilter(e.target.value)}><option>All</option>{statusOptions.map(s => <option key={s}>{s}</option>)}</select></div>
+  return <div className="content"><div className="filters filters-rich appointment-filters"><DateRangeControls range={range} setRange={setRange} appointments={appointments} onExport={() => downloadReport("appointments", range, filter, serviceFilter)} /><div className="appointment-filter-actions"><label>Visit status<select value={filter} onChange={e => setFilter(e.target.value)}><option>All</option>{statusOptions.map(s => <option key={s}>{s}</option>)}</select></label><label>Service<select value={serviceFilter} onChange={e => setServiceFilter(e.target.value)}><option>All services</option>{services.map(service => <option key={service}>{service}</option>)}</select></label><button type="button" className={`calendar-toggle ${calendarOpen ? "open" : ""}`} onClick={() => setCalendarOpen(value => !value)}>▣ {calendarOpen ? "Close calendar" : "Open calendar"} <span>{calendarOpen ? "▴" : "▾"}</span></button></div></div>
+    {calendarOpen && <AppointmentCalendar appointments={calendarItems} />}
     {actionError && <p className="form-error appointment-action-error">{actionError}</p>}
-    <div className="panel table-wrap"><table><thead><tr><th>CLIENT</th><th>DATE & TIME</th><th>SERVICE</th><th>CALL</th><th>VISIT STATUS</th><th>ORDER STATUS</th><th /></tr></thead><tbody>{filtered.map(a => { const isBlocked = blacklist.some(b => normalizePhone(b.phone) === normalizePhone(a.phone)); return <tr key={a.id}><td><div className="table-client"><span className="mini-avatar">{initials(a.client)}</span><div><b>{a.client}</b><small>{a.phone}</small></div>{isBlocked && <em>BLACKLISTED</em>}</div></td><td><b>{a.date === isoDate() ? "Today" : a.date}</b><small>{a.start} — {a.end}</small></td><td>{a.service}</td><td><button className={`call-toggle ${a.called ? "done" : ""}`} disabled={manager} onClick={() => onChange(a.id, { called: !a.called })}>{a.called ? "✓ Called" : "Mark called"}</button></td><td><select className={`status-select ${a.status.toLowerCase().replace(" ", "-")}`} value={a.status} disabled={manager} onChange={e => onChange(a.id, { status: e.target.value as Status })}>{statusOptions.map(s => <option key={s}>{s}</option>)}</select></td><td><select className="status-select placement-select" value={a.placementStatus || "Not placed"} disabled={manager} onChange={e => onChange(a.id, { placementStatus: e.target.value as PlacementStatus })}>{placementOptions.map(s => <option key={s}>{s}</option>)}</select></td><td className="appointment-actions-cell"><button className="more" aria-label={`Actions for ${a.client}`} aria-expanded={menuId === a.id} onClick={() => setMenuId(menuId === a.id ? null : a.id)}>•••</button>{menuId === a.id && <div className="appointment-menu"><button onClick={() => { setEditing(a); setMenuId(null); setActionError(""); }}><span>✎</span>Edit appointment</button><button className="danger" onClick={() => removeAppointment(a)}><span>×</span>Delete appointment</button></div>}</td></tr>; })}</tbody></table>{!filtered.length && <div className="empty">No appointments match this date range and status.</div>}</div>
-    {editing && <EditAppointmentModal appointment={editing} blacklist={blacklist} onClose={() => setEditing(null)} onSave={async (patch) => { await onChange(editing.id, patch); setEditing(null); }} />}
+    <div className="panel table-wrap"><table><thead><tr><th>CLIENT</th><th>DATE & TIME</th><th>SERVICE</th><th>CALL</th><th>VISIT STATUS</th><th>ORDER STATUS</th><th /></tr></thead><tbody>{filtered.map(a => { const isBlocked = blacklist.some(b => normalizePhone(b.phone) === normalizePhone(a.phone)); return <tr key={a.id}><td><div className="table-client"><span className="mini-avatar">{initials(a.client)}</span><div><b>{a.client}</b><small>{a.phone}</small></div>{isBlocked && <em>BLACKLISTED</em>}</div></td><td><b>{a.date === isoDate() ? "Today" : a.date}</b><small>{formatTimeRange12(a.start, a.end)}</small></td><td>{a.service}</td><td><button className={`call-toggle ${a.called ? "done" : ""}`} disabled={manager} onClick={() => onChange(a.id, { called: !a.called })}>{a.called ? "✓ Called" : "Mark called"}</button></td><td><select className={`status-select ${a.status.toLowerCase().replace(" ", "-")}`} value={a.status} disabled={manager} onChange={e => onChange(a.id, { status: e.target.value as Status })}>{statusOptions.map(s => <option key={s}>{s}</option>)}</select></td><td><select className="status-select placement-select" value={a.placementStatus || "Not placed"} disabled={manager} onChange={e => onChange(a.id, { placementStatus: e.target.value as PlacementStatus })}>{placementOptions.map(s => <option key={s}>{s}</option>)}</select></td><td className="appointment-actions-cell"><button className="more" aria-label={`Actions for ${a.client}`} aria-expanded={menuId === a.id} onClick={() => setMenuId(menuId === a.id ? null : a.id)}>•••</button>{menuId === a.id && <div className="appointment-menu"><button onClick={() => { setEditing(a); setMenuId(null); setActionError(""); }}><span>✎</span>Edit appointment</button><button className="danger" onClick={() => removeAppointment(a)}><span>×</span>Delete appointment</button></div>}</td></tr>; })}</tbody></table>{!filtered.length && <div className="empty">No appointments match this date range, status, and service.</div>}</div>
+    {editing && <EditAppointmentModal appointment={editing} appointments={appointments} blacklist={blacklist} onClose={() => setEditing(null)} onSave={async (patch) => { await onChange(editing.id, patch); setEditing(null); }} />}
   </div>;
 }
 
-function EditAppointmentModal({ appointment, blacklist, onClose, onSave }: { appointment: Appointment; blacklist: Blacklisted[]; onClose: () => void; onSave: (patch: Partial<Appointment>) => Promise<void> }) {
-  const [form, setForm] = useState<Appointment>({ ...appointment });
+type CalendarView = "Daily" | "Weekly" | "Monthly" | "Yearly";
+
+function addDays(date: Date, amount: number) { const next = new Date(date); next.setDate(next.getDate() + amount); return next; }
+function startOfWeek(date: Date) { const next = new Date(date); const offset = (next.getDay() + 6) % 7; next.setDate(next.getDate() - offset); next.setHours(12, 0, 0, 0); return next; }
+function moveCalendarDate(anchor: Date, view: CalendarView, direction: number) { const next = new Date(anchor); if (view === "Daily") next.setDate(next.getDate() + direction); else if (view === "Weekly") next.setDate(next.getDate() + direction * 7); else if (view === "Monthly") next.setMonth(next.getMonth() + direction); else next.setFullYear(next.getFullYear() + direction); return next; }
+function calendarHeading(anchor: Date, view: CalendarView) { if (view === "Daily") return anchor.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }); if (view === "Weekly") { const start = startOfWeek(anchor); const end = addDays(start, 6); return `${start.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${end.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`; } if (view === "Monthly") return anchor.toLocaleDateString("en-GB", { month: "long", year: "numeric" }); return String(anchor.getFullYear()); }
+
+function CalendarAppointment({ appointment }: { appointment: Appointment }) {
+  return <div className={`calendar-appointment ${appointment.status.toLowerCase().replace(" ", "-")}`} title={`${appointment.client} · ${appointment.service} · ${formatTimeRange12(appointment.start, appointment.end)}`}><b>{appointment.client}</b><span>{formatTimeRange12(appointment.start, appointment.end)}</span><small>{appointment.service}</small></div>;
+}
+
+function ScheduleTimeGrid({ dates, appointments }: { dates: Date[]; appointments: Appointment[] }) {
+  const dateKeys = dates.map(isoDate);
+  const visible = appointments.filter(item => dateKeys.includes(item.date));
+  const starts = visible.map(item => timeToMinutes(item.start));
+  const ends = visible.map(item => timeToMinutes(item.end));
+  const firstMinute = Math.max(0, Math.floor(Math.min(8 * 60, ...(starts.length ? starts : [8 * 60])) / 15) * 15);
+  const lastMinute = Math.min(23 * 60 + 45, Math.ceil(Math.max(18 * 60, ...(ends.length ? ends : [18 * 60])) / 15) * 15);
+  const slots: number[] = [];
+  for (let minute = firstMinute; minute <= lastMinute; minute += 15) slots.push(minute);
+  return <div className="schedule-grid-scroll"><div className="schedule-grid" style={{ gridTemplateColumns: `86px repeat(${dates.length}, minmax(145px, 1fr))` }}><div className="schedule-corner">TIME</div>{dates.map(date => <div className={`schedule-day-head ${isoDate(date) === isoDate() ? "today" : ""}`} key={isoDate(date)}><b>{date.toLocaleDateString("en-GB", { weekday: "short" })}</b><span>{date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></div>)}{slots.flatMap(slot => [<div className="schedule-time" key={`time-${slot}`}>{formatTime12(minutesToTimeValue(slot))}</div>, ...dates.map(date => { const key = isoDate(date); const cellItems = appointments.filter(item => item.date === key && timeToMinutes(item.start) >= slot && timeToMinutes(item.start) < slot + 15).sort((a, b) => a.start.localeCompare(b.start)); return <div className="schedule-cell" key={`${key}-${slot}`}>{cellItems.map(item => <CalendarAppointment appointment={item} key={item.id} />)}</div>; })])}</div></div>;
+}
+
+function MonthCalendar({ anchor, appointments }: { anchor: Date; appointments: Appointment[] }) {
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12);
+  const offset = (first.getDay() + 6) % 7;
+  const gridStart = addDays(first, -offset);
+  const days = Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
+  return <div className="month-calendar"><div className="month-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)}</div><div className="month-days">{days.map(day => { const key = isoDate(day); const dayAppointments = appointments.filter(item => item.date === key).sort((a, b) => a.start.localeCompare(b.start)); const inMonth = day.getMonth() === anchor.getMonth(); return <div className={`month-day ${inMonth ? "" : "outside"} ${key === isoDate() ? "today" : ""}`} key={key}><b>{day.getDate()}</b><div>{dayAppointments.slice(0, 3).map(item => <div className={`month-event ${item.status.toLowerCase().replace(" ", "-")}`} key={item.id}><span>{formatTimeRange12(item.start, item.end)}</span>{item.client}</div>)}{dayAppointments.length > 3 && <small>+{dayAppointments.length - 3} more</small>}</div></div>; })}</div></div>;
+}
+
+function YearCalendar({ anchor, appointments, onOpenMonth }: { anchor: Date; appointments: Appointment[]; onOpenMonth: (month: number) => void }) {
+  const year = anchor.getFullYear();
+  return <div className="year-calendar">{Array.from({ length: 12 }, (_, month) => { const first = new Date(year, month, 1, 12); const offset = (first.getDay() + 6) % 7; const daysInMonth = new Date(year, month + 1, 0).getDate(); const cells = Array.from({ length: offset + daysInMonth }, (_, index) => index < offset ? null : index - offset + 1); return <button type="button" className="year-month" key={month} onClick={() => onOpenMonth(month)}><h4>{first.toLocaleDateString("en-GB", { month: "long" })}</h4><div className="year-weekdays">{["M", "T", "W", "T", "F", "S", "S"].map((day, i) => <span key={`${day}-${i}`}>{day}</span>)}</div><div className="year-month-days">{cells.map((day, index) => day === null ? <span key={`blank-${index}`} /> : (() => { const key = isoDate(new Date(year, month, day, 12)); const count = appointments.filter(item => item.date === key).length; return <span className={count ? "has-events" : ""} key={key}>{day}{count > 0 && <i>{count}</i>}</span>; })())}</div></button>; })}</div>;
+}
+
+function AppointmentCalendar({ appointments }: { appointments: Appointment[] }) {
+  const [view, setView] = useState<CalendarView>("Weekly");
+  const [anchor, setAnchor] = useState(() => new Date());
+  const weekStart = startOfWeek(anchor);
+  const weekDates = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  return <section className="panel appointment-calendar"><div className="calendar-toolbar"><div><span>APPOINTMENT CALENDAR</span><h3>{calendarHeading(anchor, view)}</h3></div><div className="calendar-navigation"><button type="button" aria-label="Previous" onClick={() => setAnchor(current => moveCalendarDate(current, view, -1))}>←</button><button type="button" onClick={() => setAnchor(new Date())}>Today</button><button type="button" aria-label="Next" onClick={() => setAnchor(current => moveCalendarDate(current, view, 1))}>→</button></div><div className="calendar-view-switch">{(["Daily", "Weekly", "Monthly", "Yearly"] as CalendarView[]).map(option => <button type="button" key={option} className={view === option ? "active" : ""} onClick={() => setView(option)}>{option}</button>)}</div></div><div className="calendar-body">{view === "Daily" && <ScheduleTimeGrid dates={[anchor]} appointments={appointments} />}{view === "Weekly" && <ScheduleTimeGrid dates={weekDates} appointments={appointments} />}{view === "Monthly" && <MonthCalendar anchor={anchor} appointments={appointments} />}{view === "Yearly" && <YearCalendar anchor={anchor} appointments={appointments} onOpenMonth={month => { setAnchor(new Date(anchor.getFullYear(), month, 1, 12)); setView("Monthly"); }} />}</div></section>;
+}
+
+function EditAppointmentModal({ appointment, appointments, blacklist, onClose, onSave }: { appointment: Appointment; appointments: Appointment[]; blacklist: Blacklisted[]; onClose: () => void; onSave: (patch: Partial<Appointment>) => Promise<void> }) {
+  const [form, setForm] = useState<Appointment>({ ...appointment, phone: appointment.phone.replace(/\D/g, "") });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const blocked = blacklist.find(b => normalizePhone(b.phone) === normalizePhone(form.phone) && normalizePhone(b.phone) !== normalizePhone(appointment.phone));
+  const normalizedEmail = form.email.trim().toLowerCase();
+  const phoneConflict = appointments.some(item => item.id !== appointment.id && normalizePhone(item.phone) === normalizePhone(form.phone));
+  const emailConflict = normalizedEmail.length > 0 && appointments.some(item => item.id !== appointment.id && item.email.trim().toLowerCase() === normalizedEmail);
+  const emailLooksValid = !normalizedEmail || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setError("");
     if (blocked) { setError("The new phone number is blacklisted."); return; }
+    if (!/^\d{7,15}$/.test(form.phone)) { setError("Phone number must contain digits only (7 to 15 digits)."); return; }
+    if (phoneConflict) { setError("This phone number is already used by another appointment."); return; }
+    if (!emailLooksValid) { setError("Please enter a valid email address."); return; }
+    if (emailConflict) { setError("This email address is already used by another appointment."); return; }
     if (form.end <= form.start) { setError("The end time must be later than the start time."); return; }
     setBusy(true);
     try {
-      await onSave({ client: form.client, phone: form.phone, email: form.email, service: form.service, date: form.date, start: form.start, end: form.end, status: form.status, called: form.called, notes: form.notes || "", designerAssigned: form.designerAssigned || "", placementStatus: form.placementStatus || "Not placed" });
+      await onSave({ client: form.client, phone: form.phone, email: normalizedEmail, service: form.service, date: form.date, start: form.start, end: form.end, status: form.status, called: form.called, notes: form.notes || "", designerAssigned: form.designerAssigned || "", placementStatus: form.placementStatus || "Not placed" });
     } catch (err) { setError(err instanceof Error ? err.message : "Could not update appointment."); }
     finally { setBusy(false); }
   }
 
-  return <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div className="appointment-modal" role="dialog" aria-modal="true" aria-labelledby="edit-appointment-title"><div className="modal-head"><div><span>APPOINTMENT ACTION</span><h2 id="edit-appointment-title">Edit appointment</h2></div><button type="button" className="modal-close" aria-label="Close" onClick={onClose}>×</button></div><form onSubmit={submit}><div className="form-grid"><label>Client name<input required value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} /></label><label>WhatsApp number<input required value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label><label className="full">Email<input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label><label className="full">Service<select value={form.service} onChange={e => setForm({ ...form, service: e.target.value })}>{services.map(service => <option key={service}>{service}</option>)}</select></label><label className="full">Designer assigned (optional)<input type="text" placeholder="Designer name" value={form.designerAssigned || ""} onChange={e => setForm({ ...form, designerAssigned: e.target.value })} /></label><label>Date<input required type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label><div className="time-pair"><label>From<input required type="time" value={form.start} onChange={e => setForm({ ...form, start: e.target.value })} /></label><label>To<input required type="time" value={form.end} onChange={e => setForm({ ...form, end: e.target.value })} /></label></div><label>Visit status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Status })}>{statusOptions.map(status => <option key={status}>{status}</option>)}</select></label><label>Order Status<select value={form.placementStatus || "Not placed"} onChange={e => setForm({ ...form, placementStatus: e.target.value as PlacementStatus })}>{placementOptions.map(status => <option key={status}>{status}</option>)}</select></label><label className="called-check"><input type="checkbox" checked={form.called} onChange={e => setForm({ ...form, called: e.target.checked })} />Client has been called</label><label className="full">Notes<textarea value={form.notes || ""} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Preferences, occasion, or special requirements…" /></label></div>{blocked && <div className="blocked-alert"><b>⊘ Blacklisted number</b><span>{blocked.name} · {blocked.reason}</span></div>}{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !!blocked}>{busy ? "Saving…" : "Save changes"}</button></div></form></div></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div className="appointment-modal" role="dialog" aria-modal="true" aria-labelledby="edit-appointment-title"><div className="modal-head"><div><span>APPOINTMENT ACTION</span><h2 id="edit-appointment-title">Edit appointment</h2></div><button type="button" className="modal-close" aria-label="Close" onClick={onClose}>×</button></div><form onSubmit={submit}><div className="form-grid"><label>Client name<input required value={form.client} onChange={e => setForm({ ...form, client: e.target.value })} /></label><label>WhatsApp number<input required inputMode="numeric" pattern="[0-9]*" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })} />{phoneConflict && <small className="field-error">This phone number is already in use.</small>}</label><label className="full">Email (optional)<input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />{!emailLooksValid && <small className="field-error">Enter a valid email format.</small>}{emailLooksValid && emailConflict && <small className="field-error">This email address is already in use.</small>}</label><label className="full">Service<select value={form.service} onChange={e => setForm({ ...form, service: e.target.value })}>{services.map(service => <option key={service}>{service}</option>)}</select></label><label className="full">Designer assigned (optional)<input type="text" placeholder="Designer name" value={form.designerAssigned || ""} onChange={e => setForm({ ...form, designerAssigned: e.target.value })} /></label><label>Date<input required type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></label><div className="time-pair"><label>From<TimeSelect value={form.start} onChange={start => setForm({ ...form, start })} ariaLabel="Appointment start time" /></label><label>To<TimeSelect value={form.end} onChange={end => setForm({ ...form, end })} ariaLabel="Appointment end time" /></label></div><label>Visit status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as Status })}>{statusOptions.map(status => <option key={status}>{status}</option>)}</select></label><label>Order Status<select value={form.placementStatus || "Not placed"} onChange={e => setForm({ ...form, placementStatus: e.target.value as PlacementStatus })}>{placementOptions.map(status => <option key={status}>{status}</option>)}</select></label><label className="called-check"><input type="checkbox" checked={form.called} onChange={e => setForm({ ...form, called: e.target.checked })} />Client has been called</label><label className="full">Notes<textarea value={form.notes || ""} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Preferences, occasion, or special requirements…" /></label></div>{blocked && <div className="blocked-alert"><b>⊘ Blacklisted number</b><span>{blocked.name} · {blocked.reason}</span></div>}{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !!blocked || phoneConflict || emailConflict || !emailLooksValid}>{busy ? "Saving…" : "Save changes"}</button></div></form></div></div>;
 }
 
 function DateRangeControls({ range, setRange, appointments, onExport }: { range: DateRange; setRange: (range: DateRange) => void; appointments: Appointment[]; onExport?: () => void }) {
@@ -403,13 +509,39 @@ function DateRangeControls({ range, setRange, appointments, onExport }: { range:
 
 function Visits({ appointments, onChange }: { appointments: Appointment[]; onChange: (id: string, patch: Partial<Appointment>) => Promise<void> }) {
   const items = appointments.filter(a => a.date === isoDate());
-  return <div className="content"><div className="visit-summary"><p>Keep today’s call, visit and order status details aligned with the Appointments tab.</p><span>{items.length} appointment{items.length === 1 ? "" : "s"} today</span></div><div className="visit-grid">{items.map(a => <article className="panel visit-card" key={a.id}><div className="visit-top"><time>{a.start}</time><span className={`call ${a.called ? "yes" : ""}`}>{a.called ? "✓ Called" : "Call pending"}</span></div><span className="large-avatar">{initials(a.client)}</span><h3>{a.client}</h3><p>{a.service}</p><div className="visit-status-controls"><label>Call<select value={a.called ? "called" : "not-called"} onChange={e => onChange(a.id, { called: e.target.value === "called" })}><option value="called">Marked called</option><option value="not-called">Not called</option></select></label><label>Visit status<select className={`status-select ${a.status.toLowerCase().replace(" ", "-")}`} value={a.status} onChange={e => onChange(a.id, { status: e.target.value as Status })}>{statusOptions.map(status => <option key={status}>{status}</option>)}</select></label><label>Order status<select className="status-select placement-select" value={a.placementStatus || "Not placed"} onChange={e => onChange(a.id, { placementStatus: e.target.value as PlacementStatus })}>{placementOptions.map(status => <option key={status}>{status}</option>)}</select></label></div></article>)}{!items.length && <div className="empty panel">No appointments scheduled for today.</div>}</div></div>;
+  return <div className="content"><div className="visit-summary"><p>Keep today’s call, visit and order status details aligned with the Appointments tab.</p><span>{items.length} appointment{items.length === 1 ? "" : "s"} today</span></div><div className="visit-grid">{items.map(a => <article className="panel visit-card" key={a.id}><div className="visit-top"><time>{formatTimeRange12(a.start, a.end)}</time><span className={`call ${a.called ? "yes" : ""}`}>{a.called ? "✓ Called" : "Call pending"}</span></div><span className="large-avatar">{initials(a.client)}</span><h3>{a.client}</h3><p>{a.service}</p><div className="visit-status-controls"><label>Call<select value={a.called ? "called" : "not-called"} onChange={e => onChange(a.id, { called: e.target.value === "called" })}><option value="called">Marked called</option><option value="not-called">Not called</option></select></label><label>Visit status<select className={`status-select ${a.status.toLowerCase().replace(" ", "-")}`} value={a.status} onChange={e => onChange(a.id, { status: e.target.value as Status })}>{statusOptions.map(status => <option key={status}>{status}</option>)}</select></label><label>Order status<select className="status-select placement-select" value={a.placementStatus || "Not placed"} onChange={e => onChange(a.id, { placementStatus: e.target.value as PlacementStatus })}>{placementOptions.map(status => <option key={status}>{status}</option>)}</select></label></div></article>)}{!items.length && <div className="empty panel">No appointments scheduled for today.</div>}</div></div>;
 }
 
-function Blacklist({ items, onAdd }: { items: Blacklisted[]; onAdd: (b: Omit<Blacklisted, "id" | "date">) => Promise<void> }) {
-  const [show, setShow] = useState(false); const [form, setForm] = useState({ name: "", phone: "", reason: "" }); const [error, setError] = useState("");
-  async function submit(e: FormEvent) { e.preventDefault(); setError(""); try { await onAdd(form); setForm({ name: "", phone: "", reason: "" }); setShow(false); } catch (e) { setError(e instanceof Error ? e.message : "Could not add client."); } }
-  return <div className="content"><div className="blacklist-head"><p>Appointments using these phone numbers are blocked automatically.</p><button className="primary small" onClick={() => setShow(!show)}>＋ Add client</button></div>{show && <form className="panel inline-form" onSubmit={submit}><label>Client name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Phone number<input required value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label><label>Reason<input required value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} /></label><button className="primary">Add to blacklist</button>{error && <p className="form-error">{error}</p>}</form>}<div className="panel table-wrap"><table><thead><tr><th>CLIENT</th><th>PHONE NUMBER</th><th>REASON</th><th>ADDED</th><th /></tr></thead><tbody>{items.map(b => <tr key={b.id}><td><div className="table-client"><span className="mini-avatar blocked">{initials(b.name)}</span><b>{b.name}</b><em>BLACKLISTED</em></div></td><td>{b.phone}</td><td>{b.reason}</td><td>{b.date}</td><td><button className="more">•••</button></td></tr>)}</tbody></table>{!items.length && <div className="empty">No blacklisted clients.</div>}</div></div>;
+function Blacklist({ items, onAdd, onUpdate, onDelete }: { items: Blacklisted[]; onAdd: (b: Omit<Blacklisted, "id" | "date">) => Promise<void>; onUpdate: (id: string, b: Omit<Blacklisted, "id" | "date">) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
+  const [show, setShow] = useState(false);
+  const [form, setForm] = useState({ name: "", phone: "", reason: "" });
+  const [editing, setEditing] = useState<Blacklisted | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const duplicatePhone = form.phone.length > 0 && items.some(item => item.id !== editing?.id && normalizePhone(item.phone) === normalizePhone(form.phone));
+
+  function startAdd() { setEditing(null); setForm({ name: "", phone: "", reason: "" }); setError(""); setShow(true); }
+  function startEdit(item: Blacklisted) { setEditing(item); setForm({ name: item.name, phone: item.phone.replace(/\D/g, ""), reason: item.reason }); setError(""); setMenuId(null); setShow(true); }
+  function cancelForm() { setShow(false); setEditing(null); setForm({ name: "", phone: "", reason: "" }); setError(""); }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault(); setError("");
+    if (!/^\d{7,15}$/.test(form.phone)) { setError("Phone number must contain digits only (7 to 15 digits)."); return; }
+    if (duplicatePhone) { setError("That phone number is already blacklisted."); return; }
+    try {
+      if (editing) await onUpdate(editing.id, form); else await onAdd(form);
+      cancelForm();
+    } catch (e) { setError(e instanceof Error ? e.message : editing ? "Could not update client." : "Could not add client."); }
+  }
+
+  async function remove(item: Blacklisted) {
+    setMenuId(null); setError("");
+    if (!window.confirm(`Remove ${item.name} from the blacklist?`)) return;
+    try { await onDelete(item.id); if (editing?.id === item.id) cancelForm(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not delete blacklisted client."); }
+  }
+
+  return <div className="content"><div className="blacklist-head"><p>Appointments using these phone numbers are blocked automatically.</p><button className="primary small" onClick={() => show && !editing ? cancelForm() : startAdd()}>{show && !editing ? "Close" : "＋ Add client"}</button></div>{show && <form className="panel inline-form blacklist-form" onSubmit={submit}><label>Client name<input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label><label>Phone number<input required inputMode="numeric" pattern="[0-9]*" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })} />{duplicatePhone && <small className="field-error">This number is already blacklisted.</small>}</label><label>Reason<input required value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} /></label><div className="blacklist-form-actions"><button className="primary" disabled={duplicatePhone}>{editing ? "Save changes" : "Add to blacklist"}</button>{editing && <button type="button" className="secondary-button" onClick={cancelForm}>Cancel</button>}</div>{error && <p className="form-error blacklist-form-error">{error}</p>}</form>}{error && !show && <p className="form-error">{error}</p>}<div className="panel table-wrap"><table><thead><tr><th>CLIENT</th><th>PHONE NUMBER</th><th>REASON</th><th>ADDED</th><th /></tr></thead><tbody>{items.map(b => <tr key={b.id}><td><div className="table-client"><span className="mini-avatar blocked">{initials(b.name)}</span><b>{b.name}</b><em>BLACKLISTED</em></div></td><td>{b.phone}</td><td>{b.reason}</td><td>{b.date}</td><td className="appointment-actions-cell"><button className="more" aria-label={`Actions for ${b.name}`} aria-expanded={menuId === b.id} onClick={() => setMenuId(menuId === b.id ? null : b.id)}>•••</button>{menuId === b.id && <div className="appointment-menu"><button type="button" onClick={() => startEdit(b)}><span>✎</span>Edit client</button><button type="button" className="danger" onClick={() => remove(b)}><span>×</span>Delete client</button></div>}</td></tr>)}</tbody></table>{!items.length && <div className="empty">No blacklisted clients.</div>}</div></div>;
 }
 
 function PeriodFilter({ value, onChange }: { value: Period; onChange: (v: Exclude<Period, "Custom">) => void }) { return <div className="segmented period-filter">{(["All", "Daily", "Weekly", "Monthly", "Yearly"] as const).map(p => <button key={p} className={value === p ? "selected" : ""} onClick={() => onChange(p)}>{p === "All" ? "All clients" : p}</button>)}</div>; }
@@ -438,7 +570,7 @@ function Analytics({ appointments }: { appointments: Appointment[] }) {
   const [range, setRange] = useState<DateRange>(() => rangeForPreset("Monthly"));
   const filtered = useMemo(() => appointments.filter(a => inRange(a.date, range.from, range.to)), [appointments, range]);
   const attended = filtered.filter(a => a.status === "Arrived").length; const noShow = filtered.filter(a => a.status === "No show").length; const showRate = filtered.length ? Math.round(attended / filtered.length * 100) : 0;
-  return <div className="content"><div className="analytics-head report-intro"><div><span>REPORTING RANGE</span><h2>{range.period === "All" ? "All clients performance" : range.period === "Custom" ? "Custom performance" : `${range.period} performance`}</h2></div><DateRangeControls range={range} setRange={setRange} appointments={appointments} onExport={() => downloadReport("clients", range)} /></div><section className="stats-grid"><Stat label="UNIQUE CLIENTS" value={uniqueClientCount(filtered)} note={`${range.from} → ${range.to}`} /><Stat label="ATTENDED" value={attended} note={`${showRate}% show rate`} tone="green" /><Stat label="NO-SHOWS" value={noShow} note="Requires follow-up" tone="clay" /><Stat label="TOTAL BOOKINGS" value={filtered.length} note="Selected date range" /></section><section className="two-col manager-grid"><div className="panel chart-panel large"><PanelTitle title="Appointments over time" /><MiniChart items={filtered} from={range.from} to={range.to} /></div><div className="panel"><PanelTitle title="Service mix" /><div className="service-mix">{services.map(s => { const count = filtered.filter(a => a.service === s).length; const pct = filtered.length ? Math.round(count / filtered.length * 100) : 0; return <div key={s}><span>{s}</span><div><i style={{ width: `${Math.max(count ? 8 : 0, pct)}%` }} /></div><b>{count}</b></div>; })}</div></div></section></div>;
+  return <div className="content"><div className="analytics-head report-intro"><div><span>REPORTING RANGE</span><h2>{range.period === "All" ? "All clients performance" : range.period === "Custom" ? "Custom performance" : `${range.period} performance`}</h2></div><DateRangeControls range={range} setRange={setRange} appointments={appointments} onExport={() => downloadReport("clients", range)} /></div><section className="stats-grid"><Stat label="CLIENTS" value={uniqueClientCount(filtered)} note={`${range.from} → ${range.to}`} /><Stat label="ATTENDED" value={attended} note={`${showRate}% show rate`} tone="green" /><Stat label="NO-SHOWS" value={noShow} note="Requires follow-up" tone="clay" /><Stat label="TOTAL BOOKINGS" value={filtered.length} note="Selected date range" /></section><section className="two-col manager-grid"><div className="panel chart-panel large"><PanelTitle title="Appointments over time" /><MiniChart items={filtered} from={range.from} to={range.to} /></div><div className="panel"><PanelTitle title="Service mix" /><div className="service-mix">{services.map(s => { const count = filtered.filter(a => a.service === s).length; const pct = filtered.length ? Math.round(count / filtered.length * 100) : 0; return <div key={s}><span>{s}</span><div><i style={{ width: `${Math.max(count ? 8 : 0, pct)}%` }} /></div><b>{count}</b></div>; })}</div></div></section></div>;
 }
 
 function Messaging({ appointments, onNotify }: { appointments: Appointment[]; onNotify: (message: string) => void }) {
@@ -502,7 +634,7 @@ function Messaging({ appointments, onNotify }: { appointments: Appointment[]; on
         <label>Channel<select value="email" disabled><option value="email">Email only</option></select></label>
       </div>
       {audience === "custom" && <div className="message-date-range"><label>From<input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} /></label><span>→</span><label>To<input type="date" min={customFrom} value={customTo} onChange={e => setCustomTo(e.target.value)} /></label></div>}
-      <div className="audience-summary"><b>{clientCount} unique clients</b><span>{audienceRange.from} → {audienceRange.to}</span></div>
+      <div className="audience-summary"><b>{clientCount} clients</b><span>{audienceRange.from} → {audienceRange.to}</span></div>
       <label className="message-field-label">Email subject<input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Eid Mubarak" /></label>
       <label className="message-field-label">Message<textarea className="rich-editor" value={message} onChange={e => setMessage(e.target.value)} placeholder="Write the message that will be sent to clients…" /></label>
       <div className="email-attachment-field"><div><b>Image attachment</b><small>Optional · JPG, PNG, GIF or other image · max 5 MB</small></div><label className="secondary-button attachment-button">＋ Choose image<input type="file" accept="image/*" onChange={e => chooseImage(e.target.files?.[0])} /></label></div>

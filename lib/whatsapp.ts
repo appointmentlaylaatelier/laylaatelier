@@ -1,7 +1,7 @@
 export const BUSINESS_WHATSAPP_NUMBER = (process.env.NEXT_PUBLIC_WHATSAPP_BUSINESS_NUMBER || "923337109448").replace(/\D/g, "");
 
 export const DEFAULT_WHATSAPP_INQUIRY_MESSAGE =
-  "Hello {name},\n\nYour appointment at LAYLA ATELIER has been confirmed.\n\nService: {service}\nDate: {date}\nTime: {time}\n\nThank you for choosing LAYLA ATELIER. We look forward to welcoming you!";
+  "Hello {name},\n\nYour appointment at LAYLA ATELIER has been confirmed.\n\nService: {service}\nDate: {date}\nTime slot: {time}\n\nThank you for choosing LAYLA ATELIER. We look forward to welcoming you!";
 
 type InquiryContext = {
   name: string;
