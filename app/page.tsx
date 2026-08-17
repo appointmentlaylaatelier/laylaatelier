@@ -21,7 +21,7 @@ type BookingPayload = Omit<Appointment, "id" | "status" | "called"> & {
 type Blacklisted = { id: string; name: string; phone: string; reason: string; date: string };
 type DateRange = { period: Period; from: string; to: string };
 
-const services = ["Evening Gowns", "Alterations", "Fitting", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"];
+const services = ["Alterations", "Evening Gowns", "Bridal Gowns", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"];
 const statusOptions: Status[] = ["Confirmed", "Canceled", "Arrived", "No show", "Walk-in"];
 const placementOptions: PlacementStatus[] = ["Not placed", "Placed", "Follow-up"];
 const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER .\n\nService: {service}\nDate: {date}\nTime: {time}\n\nThank you for choosing LAYLA Atelier. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";

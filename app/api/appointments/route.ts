@@ -13,7 +13,7 @@ import {
 
 export const runtime = "nodejs";
 
-const allowedServices = new Set(["Evening Gowns", "Alterations", "Fitting", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"]);
+const allowedServices = new Set(["Alterations", "Evening Gowns", "Bridal Gowns", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"]);
 
 type AppointmentDoc = {
   id: string; client: string; phone: string; email: string; service: string; date: string;

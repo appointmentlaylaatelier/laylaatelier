@@ -5,7 +5,7 @@ import { getDb } from "@/lib/mongodb";
 export const runtime = "nodejs";
 
 const statuses = new Set(["Confirmed", "Canceled", "Arrived", "No show", "Walk-in"]);
-const allowedServices = new Set(["Evening Gowns", "Alterations", "Fitting", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"]);
+const allowedServices = new Set(["Alterations", "Evening Gowns", "Bridal Gowns", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"]);
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
