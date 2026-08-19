@@ -17,10 +17,10 @@ export async function GET(request: NextRequest) {
     const from = request.nextUrl.searchParams.get("from") || "0000-01-01";
     const to = request.nextUrl.searchParams.get("to") || "9999-12-31";
     const status = request.nextUrl.searchParams.get("status");
-    const service = request.nextUrl.searchParams.get("service");
+    const selectedServices = request.nextUrl.searchParams.getAll("service").filter(Boolean);
     const query: Record<string, unknown> = { date: { $gte: from, $lte: to } };
     if (status && status !== "All") query.status = status;
-    if (service && service !== "All services") query.service = service;
+    if (selectedServices.length) query.service = { $in: selectedServices };
     const db = await getDb();
     const appointments = await db.collection("appointments").find(query).sort({ date: 1, start: 1 }).toArray() as ReportAppointment[];
 
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
       rows = ["CLIENT | DATE/TIME | SERVICE | DESIGNER | VISIT STATUS | ORDER STATUS", ...appointments.map((a) => `${clean(a.client)} | ${clean(a.date)} ${formatTimeRange12(clean(a.start), clean(a.end))} | ${clean(a.service)} | ${clean(a.designerAssigned) || "—"} | ${clean(a.status)} | ${clean(a.placementStatus) || "Not placed"}`)];
     }
     if (rows.length === 2) rows.push("No records found for this date range.");
-    const pdf = createTextPdf(title, `Range: ${from} to ${to}${status && status !== "All" ? ` | Status: ${status}` : ""}${service && service !== "All services" ? ` | Service: ${service}` : ""}`, rows);
+    const pdf = createTextPdf(title, `Range: ${from} to ${to}${status && status !== "All" ? ` | Status: ${status}` : ""}${selectedServices.length ? ` | Services: ${selectedServices.join(", ")}` : ""}`, rows);
     const filename = `atelier-${type}-${from}-to-${to}.pdf`;
     return new NextResponse(pdf, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
   } catch {

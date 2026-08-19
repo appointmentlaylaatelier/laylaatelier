@@ -4,6 +4,7 @@ import { ensureBootstrap } from "@/lib/bootstrap";
 import { sessionFromRequest } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
 import { DEFAULT_CLIENT_MESSAGE01, DEFAULT_EMAIL_SUBJECT01, sendClientMessage } from "@/lib/messaging";
+import { APPOINTMENT_SERVICES } from "@/lib/services";
 import { formatTimeRange12 } from "@/lib/time";
 import {
   BUSINESS_WHATSAPP_NUMBER,
@@ -14,7 +15,7 @@ import {
 
 export const runtime = "nodejs";
 
-const allowedServices = new Set(["Alterations", "Evening Gowns", "Bridal Gowns", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"]);
+const allowedServices = new Set<string>(APPOINTMENT_SERVICES);
 
 type AppointmentDoc = {
   id: string; client: string; phone: string; email?: string; service: string; date: string;
@@ -74,13 +75,10 @@ export async function POST(request: NextRequest) {
     const blocked = await db.collection("blacklist").findOne({ normalizedPhone });
     if (blocked) return NextResponse.json({ error: "This phone number is blacklisted." }, { status: 409 });
 
-    const existingClients = await db.collection("appointments")
-      .find({}, { projection: { phone: 1, email: 1 } })
-      .toArray();
-    if (existingClients.some((item: { phone?: unknown; email?: unknown }) => String(item.phone || "").replace(/\D/g, "").replace(/^974/, "") === normalizedPhone)) {
-      return NextResponse.json({ error: "This phone number is already used by another appointment." }, { status: 409 });
-    }
-    if (email && existingClients.some((item: { phone?: unknown; email?: unknown }) => String(item.email || "").trim().toLowerCase() === email)) {
+    const existingEmail = email
+      ? await db.collection("appointments").findOne({ email }, { projection: { _id: 1 } })
+      : null;
+    if (existingEmail) {
       return NextResponse.json({ error: "This email address is already used by another appointment." }, { status: 409 });
     }
 

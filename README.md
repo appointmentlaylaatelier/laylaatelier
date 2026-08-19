@@ -14,7 +14,10 @@ Responsive Next.js showroom appointment and client-management dashboard using Mo
   - Email subject
   - Email message
 - Appointment notification fields support `{name}`, `{date}`, `{time}`, and `{service}` placeholders. The saved Messaging template is loaded as the starting wording, but it can be changed before each booking without changing the global template.
-- Appointment services are limited to **Alterations**, **Wedding Gowns**, and **Bridal Consultation** in both booking and editing flows.
+- Appointment services include **Engagement Dress** alongside the existing showroom and fitting services in both booking and editing flows.
+- Receptionist and Manager appointment views support selecting multiple services in the service filter.
+- The Daily and Weekly appointment calendars display the showroom schedule from **8:00 AM to 6:00 PM**.
+- A client phone number may be reused for multiple appointments; phone format and blacklist checks remain enforced.
 - Every appointment row has a three-dot menu with **Edit appointment** and **Delete appointment**.
 - Messaging campaigns can target All clients, This week's clients, This month's clients, This year's clients, or clients within a custom From/To range.
 - Bulk messaging supports **WhatsApp only**, **Email only**, and **WhatsApp + Email**. Email is sent through Gmail SMTP. WhatsApp messages are prepared as client-specific click-to-chat links and require staff to press **Send** in each chat.

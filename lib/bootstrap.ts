@@ -30,16 +30,26 @@ export async function ensureBootstrap() {
   if (!bootstrapPromise) {
     bootstrapPromise = (async () => {
       const db = await getDb();
+      const appointments = db.collection("appointments");
+
+      await appointments.createIndex({ date: 1 });
+      const appointmentIndexes = await appointments.indexes();
+      for (const index of appointmentIndexes) {
+        const isUniquePhoneIndex = index.unique === true
+          && Object.keys(index.key).length === 1
+          && index.key.phone === 1
+          && typeof index.name === "string";
+        if (isUniquePhoneIndex) await appointments.dropIndex(index.name as string);
+      }
+
       await Promise.all([
         db.collection("users").createIndex({ email: 1 }, { unique: true }),
-        db.collection("appointments").createIndex({ date: 1 }),
-        db.collection("appointments").createIndex({ phone: 1 }),
+        appointments.createIndex({ phone: 1 }),
         db.collection("blacklist").createIndex({ normalizedPhone: 1 }, { unique: true }),
         db.collection("message_campaigns").createIndex({ sentAt: -1 }),
         db.collection("password_reset_tokens").createIndex({ tokenHash: 1 }, { unique: true }),
         db.collection("password_reset_tokens").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
       ]);
-      const appointments = db.collection("appointments");
       await Promise.all([
         appointments.updateMany({ status: "Booked" }, { $set: { status: "Confirmed", updatedAt: new Date() } }),
         appointments.updateMany({ status: "Completed" }, { $set: { status: "Arrived", updatedAt: new Date() } }),

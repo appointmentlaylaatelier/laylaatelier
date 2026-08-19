@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionFromRequest } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
+import { APPOINTMENT_SERVICES } from "@/lib/services";
 
 export const runtime = "nodejs";
 
 const statuses = new Set(["Confirmed", "Canceled", "Arrived", "No show", "Walk-in"]);
-const allowedServices = new Set(["Alterations", "Evening Gowns", "Bridal Gowns", "1st Fitting (Evening gown)", "2nd Fitting (Evening gown)", "Final Fitting (Evening gown)", "1st Fitting (Bridal gown)", "2nd Fitting (Bridal gown)", "Final Fitting (Bridal gown)"]);
+const allowedServices = new Set<string>(APPOINTMENT_SERVICES);
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -59,12 +60,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     if (typeof patch.phone === "string") {
       if (!/^\d{7,15}$/.test(patch.phone)) return NextResponse.json({ error: "Phone number must contain digits only (7 to 15 digits)." }, { status: 400 });
       const normalizedPhone = patch.phone.replace(/\D/g, "").replace(/^974/, "");
-      const duplicatePhone = await db.collection("appointments")
-        .find({ id: { $ne: id } }, { projection: { phone: 1 } })
-        .toArray();
-      if (duplicatePhone.some((item: { phone?: unknown }) => String(item.phone || "").replace(/\D/g, "").replace(/^974/, "") === normalizedPhone)) {
-        return NextResponse.json({ error: "This phone number is already used by another appointment." }, { status: 409 });
-      }
       const existingPhone = String(existing.phone || "").replace(/\D/g, "").replace(/^974/, "");
       if (normalizedPhone !== existingPhone) {
         const blocked = await db.collection("blacklist").findOne({ normalizedPhone });
