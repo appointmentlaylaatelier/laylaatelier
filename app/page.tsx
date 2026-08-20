@@ -26,6 +26,7 @@ type DateRange = { period: Period; from: string; to: string };
 const services = APPOINTMENT_SERVICES;
 const statusOptions: Status[] = ["Confirmed", "Canceled", "Arrived", "No show", "Walk-in"];
 const placementOptions: PlacementStatus[] = ["Not placed", "Placed", "Follow-up"];
+const APPOINTMENT_SLOT_MINUTES = 30;
 const DEFAULT_CLIENT_MESSAGE01 = "Dear {name},\n\nWe are pleased to confirm your upcoming appointment at LAYLA ATELIER.\n\nService: {service}\nDate: {date}\nTime slot: {time}\n\nThank you for choosing LAYLA ATELIER. We look forward to welcoming you.\n\nWarm regards,\nLAYLA ATELIER";
 const DEFAULT_EMAIL_SUBJECT01 = "Appointment Confirmation from LAYLA ATELIER";
 const DEFAULT_CLIENT_MESSAGE02 = "May the blessings of Eid bring you joy, peace, and prosperity. Wishing you a wonderful celebration with your loved ones.";
@@ -348,7 +349,7 @@ function renderBookingTemplate(template: string, form: { client: string; service
 }
 
 function TimeSelect({ value, onChange, ariaLabel }: { value: string; onChange: (value: string) => void; ariaLabel: string }) {
-  const standard = Array.from({ length: 96 }, (_, index) => minutesToTimeValue(index * 15));
+  const standard = Array.from({ length: 48 }, (_, index) => minutesToTimeValue(index * APPOINTMENT_SLOT_MINUTES));
   const options = standard.includes(value) ? standard : [...standard, value].sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
   return <select required value={value} onChange={e => onChange(e.target.value)} aria-label={ariaLabel}>{options.map(option => <option key={option} value={option}>{formatTime12(option)}</option>)}</select>;
 }
@@ -482,11 +483,11 @@ function CalendarAppointment({ appointment }: { appointment: Appointment }) {
 }
 
 function ScheduleTimeGrid({ dates, appointments }: { dates: Date[]; appointments: Appointment[] }) {
-  const firstMinute = 8 * 60;
-  const lastMinute = 18 * 60;
+  const firstMinute = 0;
+  const lastMinute = 23 * 60 + 30;
   const slots: number[] = [];
-  for (let minute = firstMinute; minute <= lastMinute; minute += 15) slots.push(minute);
-  return <div className="schedule-grid-scroll"><div className="schedule-grid" style={{ gridTemplateColumns: `86px repeat(${dates.length}, minmax(145px, 1fr))` }}><div className="schedule-corner">TIME</div>{dates.map(date => <div className={`schedule-day-head ${isoDate(date) === isoDate() ? "today" : ""}`} key={isoDate(date)}><b>{date.toLocaleDateString("en-GB", { weekday: "short" })}</b><span>{date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></div>)}{slots.flatMap(slot => [<div className="schedule-time" key={`time-${slot}`}>{formatTime12(minutesToTimeValue(slot))}</div>, ...dates.map(date => { const key = isoDate(date); const cellItems = appointments.filter(item => item.date === key && timeToMinutes(item.start) >= slot && timeToMinutes(item.start) < slot + 15).sort((a, b) => a.start.localeCompare(b.start)); return <div className="schedule-cell" key={`${key}-${slot}`}>{cellItems.map(item => <CalendarAppointment appointment={item} key={item.id} />)}</div>; })])}</div></div>;
+  for (let minute = firstMinute; minute <= lastMinute; minute += APPOINTMENT_SLOT_MINUTES) slots.push(minute);
+  return <div className="schedule-grid-scroll"><div className="schedule-grid" style={{ gridTemplateColumns: `86px repeat(${dates.length}, minmax(145px, 1fr))` }}><div className="schedule-corner">TIME</div>{dates.map(date => <div className={`schedule-day-head ${isoDate(date) === isoDate() ? "today" : ""}`} key={isoDate(date)}><b>{date.toLocaleDateString("en-GB", { weekday: "short" })}</b><span>{date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></div>)}{slots.flatMap(slot => [<div className="schedule-time" key={`time-${slot}`}>{formatTime12(minutesToTimeValue(slot))}</div>, ...dates.map(date => { const key = isoDate(date); const cellItems = appointments.filter(item => item.date === key && timeToMinutes(item.start) >= slot && timeToMinutes(item.start) < slot + APPOINTMENT_SLOT_MINUTES).sort((a, b) => a.start.localeCompare(b.start)); return <div className="schedule-cell" key={`${key}-${slot}`}>{cellItems.map(item => <CalendarAppointment appointment={item} key={item.id} />)}</div>; })])}</div></div>;
 }
 
 function MonthCalendar({ anchor, appointments }: { anchor: Date; appointments: Appointment[] }) {
