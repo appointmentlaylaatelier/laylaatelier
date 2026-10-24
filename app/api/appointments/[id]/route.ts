@@ -1,42 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionFromRequest } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
-import { APPOINTMENT_SERVICES } from "@/lib/services";
+import { APPOINTMENT_TYPES, inferAppointmentType, isServiceCompatible, type AppointmentType } from "@/lib/services";
+import { formatTimeRange12 } from "@/lib/time";
 
 export const runtime = "nodejs";
 
 const statuses = new Set(["Confirmed", "Canceled", "Arrived", "No show", "Walk-in"]);
-const allowedServices = new Set<string>(APPOINTMENT_SERVICES);
+const allowedTypes = new Set<string>(APPOINTMENT_TYPES);
+const activeBlockingStatuses = new Set(["Confirmed", "Arrived", "Walk-in"]);
 
-function unauthorized() {
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-}
-
-function canManageAppointments(role: string) {
-  return role === "receptionist" || role === "manager";
-}
+function unauthorized() { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
+function canManageAppointments(role: string) { return role === "receptionist" || role === "manager"; }
+function overlaps(startA: string, endA: string, startB: string, endB: string) { return startA < endB && endA > startB; }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = sessionFromRequest(request);
   if (!session) return unauthorized();
-  if (!canManageAppointments(session.role)) {
-    return NextResponse.json({ error: "You do not have permission to update appointments." }, { status: 403 });
-  }
+  if (!canManageAppointments(session.role)) return NextResponse.json({ error: "You do not have permission to update appointments." }, { status: 403 });
 
   try {
     const { id } = await context.params;
     const body = await request.json();
-    const allowed = ["client", "phone", "email", "called", "status", "notes", "date", "start", "end", "service", "designerAssigned", "placementStatus"] as const;
+    const allowed = ["client", "phone", "email", "called", "status", "notes", "date", "start", "end", "appointmentType", "service", "designerAssigned", "placementStatus"] as const;
     const patch: Record<string, unknown> = { updatedAt: new Date() };
 
     for (const key of allowed) {
       if (!(key in body)) continue;
       if (key === "email") {
         patch.email = String(body.email ?? "").trim().toLowerCase();
-      } else if (["client", "phone", "date", "start", "end", "service"].includes(key)) {
+      } else if (["client", "phone", "date", "start", "end", "appointmentType", "service"].includes(key)) {
         const value = String(body[key] ?? "").trim();
         if (!value) return NextResponse.json({ error: `${key} cannot be empty.` }, { status: 400 });
-        if (key === "service" && !allowedServices.has(value)) return NextResponse.json({ error: "Invalid service." }, { status: 400 });
+        if (key === "appointmentType" && !allowedTypes.has(value)) return NextResponse.json({ error: "Invalid appointment type." }, { status: 400 });
         patch[key] = value;
       } else if (key === "notes" || key === "designerAssigned") {
         patch[key] = String(body[key] ?? "").trim();
@@ -78,8 +74,20 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     const nextStart = typeof patch.start === "string" ? patch.start : String(existing.start || "");
     const nextEnd = typeof patch.end === "string" ? patch.end : String(existing.end || "");
-    if (nextStart && nextEnd && nextEnd <= nextStart) {
-      return NextResponse.json({ error: "The end time must be later than the start time." }, { status: 400 });
+    if (nextStart && nextEnd && nextEnd <= nextStart) return NextResponse.json({ error: "The end time must be later than the start time." }, { status: 400 });
+
+    const nextType = (typeof patch.appointmentType === "string" ? patch.appointmentType : inferAppointmentType(String(existing.service || ""), existing.appointmentType)) as AppointmentType;
+    const nextService = typeof patch.service === "string" ? patch.service : String(existing.service || "");
+    if (!isServiceCompatible(nextType, nextService)) return NextResponse.json({ error: "Invalid service for the selected appointment type." }, { status: 400 });
+
+    const nextDate = typeof patch.date === "string" ? patch.date : String(existing.date || "");
+    const nextStatus = typeof patch.status === "string" ? patch.status : String(existing.status || "Confirmed");
+    if (nextType === "New Dress" && activeBlockingStatuses.has(nextStatus)) {
+      const sameDay = await db.collection("appointments").find({ id: { $ne: id }, date: nextDate, status: { $nin: ["Canceled", "No show"] } }).toArray();
+      const conflict = sameDay.find((item: Record<string, unknown>) => inferAppointmentType(String(item.service || ""), item.appointmentType) === "New Dress" && activeBlockingStatuses.has(String(item.status || "Confirmed")) && overlaps(nextStart, nextEnd, String(item.start || ""), String(item.end || "")));
+      if (conflict) {
+        return NextResponse.json({ error: `This New Dress time slot overlaps ${String(conflict.client || "another client")}'s existing appointment (${formatTimeRange12(String(conflict.start || ""), String(conflict.end || ""))}). Cancel or mark the existing appointment as No show before reusing the slot.` }, { status: 409 });
+      }
     }
 
     await db.collection("appointments").updateOne({ id }, { $set: patch });
@@ -92,9 +100,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const session = sessionFromRequest(request);
   if (!session) return unauthorized();
-  if (!canManageAppointments(session.role)) {
-    return NextResponse.json({ error: "You do not have permission to delete appointments." }, { status: 403 });
-  }
+  if (!canManageAppointments(session.role)) return NextResponse.json({ error: "You do not have permission to delete appointments." }, { status: 403 });
 
   try {
     const { id } = await context.params;

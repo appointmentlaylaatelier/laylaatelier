@@ -31,7 +31,7 @@ Responsive Next.js showroom appointment and client-management dashboard using Mo
 2. Fill in MongoDB and JWT values. Set `NEXT_PUBLIC_WHATSAPP_BUSINESS_NUMBER=923337109448`. Gmail SMTP settings are required for email sending.
 3. Run `npm install`.
 4. Run `npm run dev`.
-5. Open `http://localhost:3000` unless `APP_URL` / `PORT` were changed.
+5. Open `http://localhost:3002` unless `APP_URL` / `PORT` were changed.
 
 The included default development accounts are controlled entirely from `.env`:
 

@@ -45,6 +45,7 @@ export async function ensureBootstrap() {
       await Promise.all([
         db.collection("users").createIndex({ email: 1 }, { unique: true }),
         appointments.createIndex({ phone: 1 }),
+        appointments.createIndex({ date: 1, appointmentType: 1, start: 1, end: 1 }),
         db.collection("blacklist").createIndex({ normalizedPhone: 1 }, { unique: true }),
         db.collection("message_campaigns").createIndex({ sentAt: -1 }),
         db.collection("password_reset_tokens").createIndex({ tokenHash: 1 }, { unique: true }),
@@ -55,6 +56,8 @@ export async function ensureBootstrap() {
         appointments.updateMany({ status: "Completed" }, { $set: { status: "Arrived", updatedAt: new Date() } }),
         appointments.updateMany({ placementStatus: { $exists: false } }, { $set: { placementStatus: "Not placed" } }),
         appointments.updateMany({ designerAssigned: { $exists: false } }, { $set: { designerAssigned: "" } }),
+        appointments.updateMany({ appointmentType: { $exists: false }, service: { $regex: "fitting", $options: "i" } }, { $set: { appointmentType: "Fitting" } }),
+        appointments.updateMany({ appointmentType: { $exists: false } }, { $set: { appointmentType: "New Dress" } }),
       ]);
 
       await upsertUser(process.env.MANAGER_EMAIL || process.env.SEED_MANAGER_EMAIL, process.env.SEED_MANAGER_PASSWORD, "Manager", "manager");
